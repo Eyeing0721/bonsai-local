@@ -705,39 +705,167 @@ class Handler(BaseHTTPRequestHandler):
                                 if isinstance(p, dict) and p.get("type") in (None, "text"))
         return ""
 
-    def _augment(self, payload: bytes) -> bytes:
-        """给聊天请求插入检索到的资料。
+    def _responses_input_text(self, body: dict) -> str:
+        """从 Responses API 的请求体里取出要拿去做检索的那句话。
 
-        只在 /v1/chat/completions 上做：/v1/completions 是裸补全，没有消息
-        结构可以挂资料；/v1/embeddings 更是不能碰。任何一步不对就原样放行，
-        宁可少一次检索，也不能把用户的请求弄坏。
+        Responses 的 `input` 有两种形态：直接一个字符串，或者一个消息数组
+        （元素形状和 chat.completions 的 messages 一样）。
+        """
+        inp = body.get("input")
+        if isinstance(inp, str):
+            return inp
+        if isinstance(inp, list):
+            return self._last_user_text(inp)
+        return ""
+
+    # 底座的 chat 模板只认 xhigh / medium / low，其他取值直接 raise_exception。
+    # 而 OpenAI 的标准取值是 minimal / low / medium / high —— high 恰好是最常用的
+    # 那一个。不做映射的话，一个完全合规的客户端传 reasoning_effort="high" 会拿到
+    # HTTP 500 加一段 jinja 报错，看起来就是服务坏了。
+    #   none / minimal  -> none   （llama.cpp 见到 none 就把 thinking 关掉）
+    #   high            -> xhigh
+    EFFORT_MAP = {
+        "none": "none", "minimal": "none",
+        "low": "low", "medium": "medium",
+        "high": "xhigh", "xhigh": "xhigh",
+    }
+
+    @classmethod
+    def _normalise_effort(cls, value) -> str:
+        if not isinstance(value, str):
+            return "medium"
+        return cls.EFFORT_MAP.get(value.strip().lower(), "medium")
+
+    def _fix_effort(self, path: str, body: dict) -> bool:
+        """把客户端给的推理强度映射成模板认识的取值。"""
+        changed = False
+        if path == "/v1/responses":
+            r = body.get("reasoning")
+            if isinstance(r, dict) and "effort" in r:
+                want = self._normalise_effort(r["effort"])
+                if r["effort"] != want:
+                    r["effort"] = want
+                    changed = True
+            elif "reasoning_effort" in body:
+                # 有的客户端在 Responses 上也直接发顶层 reasoning_effort
+                want = self._normalise_effort(body["reasoning_effort"])
+                if body["reasoning_effort"] != want:
+                    body["reasoning_effort"] = want
+                    changed = True
+            return changed
+        if "reasoning_effort" in body:
+            want = self._normalise_effort(body["reasoning_effort"])
+            if body["reasoning_effort"] != want:
+                body["reasoning_effort"] = want
+                changed = True
+        return changed
+
+    @staticmethod
+    def _thinking_disabled(path: str, body: dict) -> bool:
+        """请求里已经显式表达过"要不要思考"吗？"""
+        kwargs = body.get("chat_template_kwargs")
+        if isinstance(kwargs, dict) and "enable_thinking" in kwargs:
+            return True
+        if path == "/v1/responses":
+            return "reasoning" in body or "reasoning_effort" in body
+        return "reasoning_effort" in body
+
+    def _apply_defaults(self, path: str, body: dict) -> bool:
+        """思维链默认关。
+
+        底座模型的 chat 模板默认**开**思维，而思考的 token 也算在 max_tokens /
+        max_output_tokens 里。结果就是一个按 gpt-4o 写的标准客户端设个正常的
+        上限，可能拿到一段全是思考、正文空空的回答 —— 看起来完全像服务坏了。
+        界面一直是关掉的，接口也保持一致。
+
+        想开就显式传（都是 OpenAI 的原生参数）：
+            chat:      "reasoning_effort": "low" | "medium" | "high"
+            responses: "reasoning": {"effort": "low"}
+        显式传了就不动它。
+        """
+        if self._thinking_disabled(path, body):
+            return False
+        if path == "/v1/responses":
+            body["reasoning"] = {"effort": "none"}
+        else:
+            body["reasoning_effort"] = "none"
+        return True
+
+    def _prepare_body(self, payload: bytes) -> bytes:
+        """转发前统一加工：补默认参数 + 注入检索到的资料。
+
+        两个入口都支持：
+          /v1/chat/completions
+          /v1/responses         input 是裸字符串时包成数组；有 instructions
+                                就接在它后面，否则往 input 开头插一条 system
+        /v1/completions 是裸补全，没有消息结构可以挂资料；/v1/embeddings 更
+        不能碰。任何一步不对就原样放行 —— 宁可少一次检索，也不能把用户的请求
+        弄坏。
         """
         if not payload:
             return payload
-        if urllib.parse.urlparse(self.path).path != "/v1/chat/completions":
-            return payload
-        app = self.app
-        if not app.settings.get("kb_enabled", True):
+        path = urllib.parse.urlparse(self.path).path
+        if path not in ("/v1/chat/completions", "/v1/responses"):
             return payload
         try:
             body = json.loads(payload.decode("utf-8"))
         except Exception:                                       # noqa: BLE001
             return payload
-        messages = body.get("messages")
-        if not isinstance(messages, list) or not messages:
+        if not isinstance(body, dict):
             return payload
-        query = self._last_user_text(messages)
-        if not query.strip():
+
+        changed = self._apply_defaults(path, body)
+        changed = self._fix_effort(path, body) or changed
+        app = self.app
+        if app.settings.get("kb_enabled", True):
+            if path == "/v1/responses":
+                query = self._responses_input_text(body)
+            else:
+                messages = body.get("messages")
+                query = (self._last_user_text(messages)
+                         if isinstance(messages, list) else "")
+            if query.strip():
+                context, hits = "", []
+                try:
+                    context, hits = app.kb.build_context(
+                        query, embed=app.kb_embed_fn())
+                except Exception:                               # noqa: BLE001
+                    context = ""
+                if context:
+                    note = kb_mod.SYSTEM_TEMPLATE.format(context=context)
+                    try:
+                        if path == "/v1/responses":
+                            # 同样插在最后一条用户项之前，不碰 instructions。
+                            # 动 instructions 等于改了整个提示的最前面，前缀缓存
+                            # 会从头作废（见 knowledge.build_messages 的说明）。
+                            inp = body.get("input")
+                            if isinstance(inp, str):
+                                body["input"] = [{"role": "system", "content": note},
+                                                 {"role": "user", "content": inp}]
+                            elif isinstance(inp, list):
+                                at = len(inp)
+                                for i in range(len(inp) - 1, -1, -1):
+                                    it = inp[i]
+                                    if isinstance(it, dict) and it.get("role") == "user":
+                                        at = i
+                                        break
+                                body["input"] = (inp[:at]
+                                                 + [{"role": "system", "content": note}]
+                                                 + inp[at:])
+                            else:
+                                context = ""
+                        else:
+                            body["messages"] = kb_mod.build_messages(
+                                body["messages"], context)
+                    except Exception:                           # noqa: BLE001
+                        context = ""
+                    if context:
+                        app.last_hits = [{"doc": h.doc_name, "score": h.score,
+                                          "preview": h.text[:80]} for h in hits]
+                        changed = True
+
+        if not changed:
             return payload
-        try:
-            context, hits = app.kb.build_context(query, embed=app.kb_embed_fn())
-        except Exception:                                       # noqa: BLE001
-            return payload
-        if not context:
-            return payload
-        body["messages"] = kb_mod.build_messages(messages, context)
-        app.last_hits = [{"doc": h.doc_name, "score": h.score,
-                          "preview": h.text[:80]} for h in hits]
         return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     def _proxy_raw(self, payload: bytes | None) -> None:
@@ -752,7 +880,7 @@ class Handler(BaseHTTPRequestHandler):
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in HOP_BY_HOP and k.lower() != "host"}
         if payload is not None:
-            payload = self._augment(payload)
+            payload = self._prepare_body(payload)
             # 正文长度变了就必须重写 Content-Length，否则上游会按旧长度读，
             # 表现为请求挂住或截断 —— 这类错误在日志里几乎看不出来。
             headers = {k: v for k, v in headers.items()
@@ -762,19 +890,44 @@ class Handler(BaseHTTPRequestHandler):
         try:
             conn.request(self.command, self.path, body=payload, headers=headers)
             resp = conn.getresponse()
+
+            upstream = {k.lower(): v for k, v in resp.getheaders()}
+            length = upstream.get("content-length")
+
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() in HOP_BY_HOP or k.lower() == "content-length":
                     continue
                 self.send_header(k, v)
+            # 上游没给 Content-Length 就是流式（SSE / chunked）。这时候必须由
+            # 我们给出边界：要么自己按 chunked 编码转发，要么靠关闭连接来定界。
+            # 走 chunked 更规矩 —— cloudflared 这类中间层对"靠关闭定界"的响应
+            # 会先缓冲，流式就白做了。
+            chunked = length is None
+            if chunked:
+                self.send_header("Transfer-Encoding", "chunked")
+            else:
+                self.send_header("Content-Length", length)
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
+
             while True:
-                chunk = resp.read(4096)
+                # read1 而不是 read：read(n) 会阻塞到攒满 n 字节，而 SSE 一个事件
+                # 才几十到几百字节 —— 那等于把流式攒成一次性输出，客户端要等整段
+                # 生成完才看到第一个字。read1 有多少给多少。
+                chunk = resp.read1(65536)
                 if not chunk:
                     break
-                self.wfile.write(chunk)
+                if chunked:
+                    self.wfile.write(b"%X\r\n" % len(chunk))
+                    self.wfile.write(chunk)
+                    self.wfile.write(b"\r\n")
+                else:
+                    self.wfile.write(chunk)
+                self.wfile.flush()
+            if chunked:
+                self.wfile.write(b"0\r\n\r\n")           # chunked 结束标记
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass                                                # client hung up

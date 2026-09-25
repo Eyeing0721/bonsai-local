@@ -40,6 +40,7 @@
 ### 接进别的程序
 
 接口是 OpenAI 兼容的，地址 `http://127.0.0.1:<端口>/v1`，令牌在设置页里复制。
+官方的 `openai` Python / JS SDK 可以直接用。
 
 ```bash
 curl http://127.0.0.1:PORT/v1/chat/completions \
@@ -47,6 +48,44 @@ curl http://127.0.0.1:PORT/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"bonsai","messages":[{"role":"user","content":"你好"}]}'
 ```
+
+支持这些端点，都支持 `stream: true` 的 SSE 流式：
+
+| 端点 | 说明 |
+|---|---|
+| `POST /v1/chat/completions` | 标准对话接口 |
+| `POST /v1/responses` | OpenAI 新的 Responses API，含 `response.output_text.delta` 等事件流 |
+| `POST /v1/responses/input_tokens` | token 计数 |
+| `POST /v1/completions` | 老式裸补全 |
+| `POST /v1/embeddings` | 向量（普通对话用不到） |
+| `GET /v1/models` | 模型列表 |
+
+#### 两个和官方不完全一样的地方，都做了兼容处理
+
+**思维链默认关。** 底座模型的模板默认开思维，而思考的 token 也算在 `max_tokens`
+里 —— 客户端设个正常上限就可能拿到一段全是思考、正文空空的回答。所以本程序默认
+关掉它，和界面的行为一致。想开就传标准参数：
+
+```json
+{ "reasoning_effort": "low" }                  // chat completions
+{ "reasoning": { "effort": "low" } }           // responses
+```
+
+**推理强度会被映射。** `minimal` / `none` 关掉思考，`low` / `medium` 原样，
+`high` 映射成模型认识的 `xhigh`。这样官方文档里的标准取值都能直接用
+（不映射的话 `high` 和 `minimal` 会直接 500）。
+
+#### 速度参考
+
+实测（RTX 4060 Ti 16GB）：
+
+- **生成 30–33 token/秒**，从 8K 到 128K 上下文几乎不掉速 —— 这个模型 64 层里只有
+  16 层是普通注意力，其余是定长状态的线性注意力。
+- **读提示 390–470 token/秒**。给一篇 10 万字的材料，光读进去就要几分钟。长材料
+  建议放进「我的资料」按需检索，而不是整篇贴进对话。
+- 同一个请求重复发会命中前缀缓存：实测 2300 token 的提示从 6.4 秒降到 1.0 秒。
+  但**改了提示最前面的内容缓存就全废**，所以本程序把检索到的资料插在最后一轮
+  对话之前，而不是插在最前面。
 
 ## 让它知道你不知道它不知道的事
 
