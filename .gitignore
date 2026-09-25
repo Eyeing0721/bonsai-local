@@ -1,0 +1,22 @@
+# 构建产物
+build/work/
+build/*.log
+dist/
+*.spec.bak
+
+# 本机开发用的目录（模型是目录联接，不进版本库）
+devdata/
+devdata2/
+*.log
+*.err
+
+# 注意：bonsai/assets/abl-lora-t.gguf（8.5 MB）是故意提交的 ——
+# 产品依赖它，而且它很小，提交进来才能让一次 clone 就构建出可用产物。
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/

@@ -1,0 +1,61 @@
+name: Release
+
+# 打 tag（例如 v1.0.0）时自动构建并挂到 Release 上。
+#
+# 应用本体（BonsaiLocal.exe）在这里构建；推理引擎包体积大、需要 CUDA/nvcc 环境，
+# 默认由本地 `python build/make_release.py --with-engines` 产出后手动上传到同一个
+# Release。如果你的 runner 已经具备构建条件，把下面的 engines 步骤取消注释即可。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller pywebview qrcode
+
+      - name: 下载方向适配器
+        shell: pwsh
+        run: |
+          # 适配器 8 MB，是产品的一部分；从公开发布处取回后打进 exe。
+          New-Item -ItemType Directory -Force -Path bonsai\assets | Out-Null
+          $env:BONSAI_LORA_URL = "https://huggingface.co/AtomicChat/Ternary-Bonsai-2-27B-Abliterate-LoRA-GGUF/resolve/main/bonsai2-27b-abliterate-own42-lora.gguf"
+          # 生产环境请换成自己产的适配器并校验 sha256：
+          # curl.exe -L -o bonsai\assets\abl-lora-t.gguf $env:BONSAI_LORA_URL
+          Write-Host "把自产的 abl-lora-t.gguf 放进 bonsai/assets/ 后再发布"
+
+      - name: 构建应用
+        run: python build/make_release.py
+
+      # - name: 构建引擎包
+      #   run: python build/make_release.py --with-engines
+
+      - name: 自检
+        run: |
+          python -c "import bonsai.config, bonsai.fetch, bonsai.engine, bonsai.tunnel, bonsai.server; print('imports ok')"
+          python tests/test_download.py
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/BonsaiLocal.exe
+            dist/SHA256SUMS
+            dist/engines.json
+            dist/engines/*.zip
+          generate_release_notes: true
