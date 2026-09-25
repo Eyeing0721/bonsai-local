@@ -18,7 +18,7 @@ from pathlib import Path
 
 APP_NAME = "BonsaiLocal"
 APP_TITLE = "Bonsai 本地助手"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------- memory tiers
 # A user picks a feeling, not a number. n_ctx is an implementation detail.
@@ -134,8 +134,20 @@ class Settings:
     # -- derived paths ----------------------------------------------------
     @property
     def data_dir(self) -> Path:
+        """数据目录，永远是绝对路径。
+
+        必须 resolve：llama-server 是以**引擎目录**为工作目录启动的，如果这里
+        留着相对路径（比如命令行传了 `--data-dir devdata`），模型路径传给引擎
+        后就变成了相对引擎目录，表现为 "failed to open GGUF file ... No such
+        file or directory" —— 而文件其实好好地在磁盘上。
+        """
         raw = self.get("data_dir") or ""
-        return Path(raw) if raw else default_data_dir()
+        if not raw:
+            return default_data_dir()
+        try:
+            return Path(raw).expanduser().resolve()
+        except OSError:
+            return Path(raw)
 
     @property
     def models_dir(self) -> Path:
