@@ -1,8 +1,8 @@
 {
-  "cuda-ada": {
-    "url": "https://github.com/Eyeing0721/bonsai-local/releases/latest/download/engine-cuda-ada.zip",
-    "bytes": 635301949,
-    "sha256": "c5c9d7fc86117baf4cff556908fbd77ca3a1b717dd58709a335bc2d35935820a"
+  "cuda": {
+    "url": "https://github.com/Eyeing0721/bonsai-local/releases/latest/download/engine-cuda.zip",
+    "bytes": 704123848,
+    "sha256": "3f34659c7d18f22a2588386a74fef8f479db6dc8c0d2c3603f80ce3966d1a8e5"
   },
   "cpu": {
     "url": "https://github.com/Eyeing0721/bonsai-local/releases/latest/download/engine-cpu.zip",

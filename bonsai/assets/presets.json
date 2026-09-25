@@ -1,0 +1,73 @@
+{
+  "version": 2,
+  "note": "预设 = 挑好的 LoRA 组合 + 调好的权重。用户看到的是「像一个什么样的人说话」，不是 rank 和 scale。权重是对 LoRA 自带 alpha/rank 的倍率；实测同一个中文文风 LoRA 在 0.4 / 0.7 / 1.0 下分别是散文腔 / 叙事腔 / 小说腔，所以它撑得起三个不同预设。abliterated 决定要不要挂去拒答适配器：只有「默认」不挂，因为「默认」的卖点就是最接近模型原本的样子；其余预设挂上，否则模型会一边被风格包推着走、一边又被拒答拽回去。",
+  "presets": [
+    {
+      "id": "default",
+      "name": "默认",
+      "desc": "不加任何风格，回答最接近模型本身",
+      "hint": "最快",
+      "abliterated": false,
+      "loras": []
+    },
+    {
+      "id": "writing",
+      "name": "中文写作",
+      "desc": "写出来有叙事感、会补细节，但仍围绕你的问题",
+      "hint": "约慢 12%",
+      "abliterated": true,
+      "loras": [
+        { "id": "chinese-taste", "weight": 0.7 }
+      ]
+    },
+    {
+      "id": "fiction",
+      "name": "中文小说",
+      "desc": "完全进入小说模式，会自己铺人物和对话，适合写故事",
+      "hint": "约慢 12%",
+      "abliterated": true,
+      "loras": [
+        { "id": "chinese-taste", "weight": 1.0 }
+      ]
+    },
+    {
+      "id": "coding",
+      "name": "编程",
+      "desc": "回答更短更直接，写代码时少客套",
+      "hint": "约慢 12%",
+      "abliterated": true,
+      "loras": [
+        { "id": "terse-coder", "weight": 0.7 }
+      ]
+    },
+    {
+      "id": "friendly",
+      "name": "随和",
+      "desc": "更口语化、更放松的语气",
+      "hint": "约慢 12%",
+      "abliterated": true,
+      "loras": [
+        { "id": "samantha", "weight": 0.7 }
+      ]
+    },
+    {
+      "id": "chinese-tech",
+      "name": "中文技术",
+      "desc": "中文表达 + 简洁，适合写技术说明和文档",
+      "hint": "约慢 25%",
+      "abliterated": true,
+      "loras": [
+        { "id": "chinese-taste", "weight": 0.5 },
+        { "id": "terse-coder", "weight": 0.5 }
+      ]
+    },
+    {
+      "id": "custom",
+      "name": "自定义",
+      "desc": "自己决定挂哪些风格包、各用多少权重",
+      "hint": "每个约慢 12%",
+      "abliterated": true,
+      "loras": null
+    }
+  ]
+}

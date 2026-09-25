@@ -70,7 +70,40 @@ def build_exe(console: bool) -> Path:
     if not exe.exists():
         raise SystemExit(f"没有生成 {exe}")
     print(f"   {exe}  {exe.stat().st_size / 2**20:.1f} MB")
+    mb = exe.stat().st_size / 2**20
+    if mb > 120:
+        # 出过一次：gguf/vocab.py 里一个函数内的 import 把 torch/tensorflow 整条
+        # 链拖进来，exe 涨到 GB 级、CArchive 直接溢出，而且报错信息
+        # （struct.error: argument out of range）跟真正原因毫无关系。
+        # 体积是这类回归最容易观测的信号，所以在这里挡一下。
+        raise SystemExit(
+            f"exe 有 {mb:.0f} MB，远超正常范围（约 40-70 MB）。"
+            f"多半是依赖图里混进了 torch/tensorflow 之类的大家伙 —— "
+            f"看 build/bonsai.spec 的 excludes，或跑 build/why_heavy.py 定位。")
+    verify_exe(exe)
     return exe
+
+
+def verify_exe(exe: Path) -> None:
+    """跑一次 exe 自带的自检，缺依赖就当场失败。
+
+    这一条是有教训的：numpy 曾经被写进 spec 的 excludes，源码全绿、只有打包版
+    在「非 1.0 权重的预设」这条路径上崩。冻结产物和源码是两套依赖图，所以
+    必须让冻结产物自己证明它齐全 —— 不能靠"源码测试都过了"来推断。
+    """
+    print("   自检 exe …")
+    try:
+        r = subprocess.run([str(exe), "--selftest"], capture_output=True,
+                           timeout=300, text=True, encoding="utf-8",
+                           errors="replace")
+    except Exception as e:                                      # noqa: BLE001
+        raise SystemExit(f"exe 自检无法运行：{e}")
+    out = (r.stdout or "") + (r.stderr or "")
+    for line in out.splitlines():
+        if line.strip().startswith(("[OK", "[FAIL", "自检结果")):
+            print("     " + line.strip())
+    if r.returncode != 0:
+        raise SystemExit("exe 自检没通过，依赖或资源不齐 —— 不要发布这个包")
 
 
 def verify_engine_zip(zip_path: Path) -> bool:
@@ -164,6 +197,12 @@ def main() -> int:
     if args.with_engines:
         if args.repo == "OWNER/REPO":
             print("警告：--repo 还是占位值，生成的下载地址不可用。")
+        # 先清掉上一轮留下的引擎包。上一次发布时 dist 里同时躺着一个陈旧的
+        # engine-cuda-ada.zip（旧单架构）和新打的 engine-cuda.zip（多架构），
+        # 上传时很容易抓错文件 —— dist 应该只反映本次构建。
+        for stale in sorted(ENGINES_OUT.glob("engine-*.zip")):
+            stale.unlink()
+            print(f"   清掉上一轮的 {stale.name}")
         cuda = make_engine_zip("cuda", CUDA_BIN,
                                ENGINE_FILES_COMMON + ENGINE_FILES_CUDA,
                                [CUDA_RUNTIME / n for n in CUDA_DLLS], args.repo)

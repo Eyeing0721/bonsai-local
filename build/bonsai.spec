@@ -29,12 +29,40 @@ hidden = [
     "webview", "webview.platforms.edgechromium",
     "qrcode", "qrcode.image.svg",
     "tkinter", "tkinter.filedialog",
+    # numpy 是硬依赖，不能排除：
+    #   lora_scale.py 顶层就 import 它（给预设调权重时用）
+    #   knowledge.py 用它存向量矩阵
+    # 曾经它在 excludes 里，症状是"打包版一选非 1.0 权重的预设就崩" ——
+    # 源码跑得好好的，只有冻结后才现形。
+    "numpy",
+    # PDF 是普通人最常往里丢的东西，pypdf 是纯 Python、没有原生依赖，
+    # 换来的是"拖个 PDF 进去就能问"。
+    "pypdf",
 ]
 
 excludes = [
-    "numpy", "pandas", "matplotlib", "scipy", "PIL", "PyQt5", "PySide2",
-    "PySide6", "IPython", "pytest", "setuptools", "pip", "notebook",
-    "sqlite3", "unittest", "pydoc", "doctest",
+    # ─────────────────────────────────────────────────────────────────────
+    # 为什么这一串这么长：PyInstaller 会跟踪**函数体内**的 import。
+    # gguf/vocab.py 第 404 行有个函数里写着 `from transformers import
+    # AutoTokenizer`（我们从不调用它），而 lora_scale.py 需要 gguf。
+    # 于是依赖图变成：
+    #     lora_scale → gguf → vocab → transformers
+    #         → hook-transformers 把整个 site-packages 收进来
+    #           （torch / tensorflow / timm / sklearn / diffusers / yt_dlp …）
+    # 结果 CArchive 条目数溢出，构建直接崩（struct.error: argument out of
+    # range）。所以这些名字不是顺手排掉，是必须挡住的那条路径。
+    # ─────────────────────────────────────────────────────────────────────
+    "transformers", "sentencepiece", "tokenizers", "huggingface_hub",
+    "safetensors", "peft", "datasets", "accelerate", "bitsandbytes", "unsloth",
+    "torch", "torchvision", "torchaudio", "tensorflow", "keras",
+    "diffusers", "gradio", "timm", "sklearn", "scipy", "pandas", "matplotlib",
+    "PIL", "cv2", "librosa", "soundfile", "sounddevice", "numba", "llvmlite",
+    "av", "imageio", "pyarrow", "faiss", "triton", "onnxruntime", "yt_dlp",
+    "uvicorn", "fastapi", "starlette", "sqlalchemy", "grpc", "google",
+    "sympy", "networkx", "h5py", "tifffile", "numexpr", "sentence_transformers",
+    # 下面这些本来就在，保留
+    "PyQt5", "PySide2", "PySide6", "IPython", "pytest", "setuptools", "pip",
+    "notebook", "sqlite3", "unittest", "pydoc", "doctest",
 ]
 
 a = Analysis(

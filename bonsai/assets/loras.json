@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "note": "助手风格包目录。权重由各自的原作者仓库分发，本程序只提供一键安装与完整性校验，不再分发任何权重。每个条目的 license 字段是原作者声明的许可证，请自行确认后再使用。",
+  "items": [
+    {
+      "id": "chinese-taste",
+      "name": "中文文风",
+      "desc": "写中文更像母语者：会加细节、会叙事，而不是教科书腔",
+      "source": "Moeblack/Qwen3.8-27B-chinese-taste-sft-lora",
+      "license": "other（原作者未明确，请自行确认）",
+      "bytes": 15995264,
+      "sha256": "02211ccec9e44a0c753ea37682105b4f0faf39d37512ac8f931d9dd3164b3c3d",
+      "url": [
+        "https://huggingface.co/Moeblack/Qwen3.8-27B-chinese-taste-sft-lora/resolve/main/qwen3.8-27b-chinese-taste-sft-lora-q8_0.gguf",
+        "https://hf-mirror.com/Moeblack/Qwen3.8-27B-chinese-taste-sft-lora/resolve/main/qwen3.8-27b-chinese-taste-sft-lora-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "terse-coder",
+      "name": "简洁编码",
+      "desc": "回答更短、更直接，写代码时少废话",
+      "source": "Shockem/Qwen3.8-27b-Terse-Coder-LoRA",
+      "license": "apache-2.0",
+      "bytes": 182652192,
+      "sha256": "e635ee29424aa1803f85b8956f4fa199b6fab05fc656430a547283bb0b3c4299",
+      "url": [
+        "https://huggingface.co/Shockem/Qwen3.8-27b-Terse-Coder-LoRA/resolve/main/archive/r7/gguf/Qwen3.8-27b-Terse-Coder-LoRA-q8_0.gguf",
+        "https://hf-mirror.com/Shockem/Qwen3.8-27b-Terse-Coder-LoRA/resolve/main/archive/r7/gguf/Qwen3.8-27b-Terse-Coder-LoRA-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "samantha",
+      "name": "Samantha（温和人格）",
+      "desc": "更随和、更口语化的助手人格",
+      "source": "Lathly/Qwen3.8-27B-Samantha_Uncensored_1.1_LoRA",
+      "license": "apache-2.0",
+      "bytes": 159419136,
+      "sha256": "c39db1a9179296f93733035f5ef3b49426e6017c7174c1fb6e3412fb97363125",
+      "url": [
+        "https://huggingface.co/Lathly/Qwen3.8-27B-Samantha_Uncensored_1.1_LoRA/resolve/main/Qwen3.8-27B-Samantha-LoRA-qwen35.gguf",
+        "https://hf-mirror.com/Lathly/Qwen3.8-27B-Samantha_Uncensored_1.1_LoRA/resolve/main/Qwen3.8-27B-Samantha-LoRA-qwen35.gguf"
+      ]
+    }
+  ]
+}

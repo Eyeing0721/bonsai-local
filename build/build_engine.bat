@@ -14,16 +14,23 @@ REM    3. The generator matters. Letting CMake pick "Visual Studio 17 2022" make
 REM       it fail with "The C compiler identification is unknown" even inside a
 REM       developer prompt. The working configuration is Ninja + an explicit
 REM       nvcc path, so that is what we reproduce here.
+REM    4. LLAMA_BUILD_TOOLS must stay ON: tools/CMakeLists.txt is only added when
+REM       it is, and llama-server lives under tools/server.
+REM    5. nvcc writes tens of GB of intermediates to TEMP. If TEMP is on the
+REM       system drive, that drive fills up and the build dies with a misleading
+REM       "No space left on device" half way through.
 REM
 REM  Usage:
 REM      build\build_engine.bat cuda      multi-arch CUDA (RTX 20/30/40/50, A100, H100)
+REM      build\build_engine.bat vulkan    Vulkan (NVIDIA / AMD / Intel)
 REM      build\build_engine.bat cpu       CPU-only fallback
 REM
 REM  Overridable environment variables:
-REM      LLAMA_SRC   fork checkout      (default E:\src\llama-prism)
-REM      CUDA_PATH   CUDA Toolkit       (default E:\cuda)
-REM      VC_VARS     vcvars64.bat path
-REM      NINJA_DIR   folder holding ninja.exe
+REM      LLAMA_SRC    fork checkout      (default E:\src\llama-prism)
+REM      CUDA_PATH    CUDA Toolkit       (default E:\cuda)
+REM      VULKAN_SDK   Vulkan SDK         (default E:\VulkanSDK)
+REM      VC_VARS      vcvars64.bat path
+REM      NINJA_DIR    folder holding ninja.exe
 REM ============================================================================
 setlocal
 
@@ -32,6 +39,7 @@ if "%MODE%"=="" set "MODE=cuda"
 
 if "%LLAMA_SRC%"=="" set "LLAMA_SRC=E:\src\llama-prism"
 if "%CUDA_PATH%"=="" set "CUDA_PATH=E:\cuda"
+if "%VULKAN_SDK%"=="" set "VULKAN_SDK=E:\VulkanSDK"
 if "%VC_VARS%"=="" set "VC_VARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 if "%NINJA_DIR%"=="" set "NINJA_DIR=%USERPROFILE%\AppData\Local\Programs\Python\Python311\Scripts"
 
@@ -41,25 +49,25 @@ set "CUDA_ARCH=75-real;80-real;86-real;89-real;90-real;120-real"
 
 if /I "%MODE%"=="cuda" (
   set "BUILD_DIR=%LLAMA_SRC%\build-cuda-multi"
-  set "ARCH_ARG=-DCMAKE_CUDA_ARCHITECTURES=%CUDA_ARCH%"
-  set "CUDA_OPT=-DGGML_CUDA=ON"
   set "NVCC_ARG=-DCMAKE_CUDA_COMPILER=%CUDA_PATH%\bin\nvcc.exe"
+  set "BACKEND_ARG=-DGGML_CUDA=ON"
+) else if /I "%MODE%"=="vulkan" (
+  set "BUILD_DIR=%LLAMA_SRC%\build-vulkan"
+  set "NVCC_ARG="
+  set "BACKEND_ARG=-DGGML_VULKAN=ON"
 ) else (
   set "BUILD_DIR=%LLAMA_SRC%\build-cpu"
-  set "ARCH_ARG="
-  set "CUDA_OPT=-DGGML_CUDA=OFF"
   set "NVCC_ARG="
+  set "BACKEND_ARG=-DGGML_CUDA=OFF"
 )
 
 echo === mode: %MODE% ===
 echo     source: %LLAMA_SRC%
 echo     build : %BUILD_DIR%
 if /I "%MODE%"=="cuda" echo     arch  : %CUDA_ARCH%
+if /I "%MODE%"=="vulkan" echo     sdk   : %VULKAN_SDK%
 
-REM nvcc writes very large intermediates to TEMP, and compiling six architectures
-REM produces tens of GB. If TEMP lives on the system drive that drive fills up and
-REM the build dies with a misleading "No space left on device" partway through.
-REM Keep the scratch on the same drive as the build output instead.
+REM Scratch must not live on the system drive; see note 5 above.
 for %%I in ("%BUILD_DIR%") do set "BUILD_DRIVE=%%~dI"
 REM %%~dI yields "E:" with no trailing separator; without the extra backslash the
 REM path becomes drive-relative ("E:llama-build-tmp") and cl fails to write its
@@ -82,21 +90,26 @@ if errorlevel 1 (
   )
 )
 
+if /I "%MODE%"=="vulkan" (
+  if not exist "%VULKAN_SDK%\Bin\glslc.exe" (
+    echo [ERROR] glslc not found under %VULKAN_SDK%. Install the LunarG Vulkan SDK
+    echo         or set VULKAN_SDK to its location.
+    exit /b 1
+  )
+  set "PATH=%VULKAN_SDK%\Bin;%PATH%"
+)
+
 call "%VC_VARS%"
 if errorlevel 1 (
   echo [ERROR] MSVC environment not found: %VC_VARS%
   exit /b 1
 )
 
-REM  LLAMA_BUILD_TOOLS must stay ON: tools/CMakeLists.txt is only added when it is,
-REM  and llama-server lives under tools/server. Turning it off makes configure
-REM  succeed and then `ninja --target llama-server` fail with "unknown target".
 cmake -S "%LLAMA_SRC%" -B "%BUILD_DIR%" ^
   -G Ninja ^
   -DCMAKE_BUILD_TYPE=Release ^
-  -DCMAKE_CUDA_ARCHITECTURES=%CUDA_ARCH% ^
+  %BACKEND_ARG% ^
   %NVCC_ARG% ^
-  %CUDA_OPT% ^
   -DLLAMA_BUILD_SERVER=ON ^
   -DLLAMA_BUILD_TOOLS=ON ^
   -DLLAMA_BUILD_EXAMPLES=OFF ^
@@ -114,5 +127,7 @@ if errorlevel 1 (
 
 echo.
 echo === done: %BUILD_DIR%\bin\llama-server.exe ===
-dir /b "%BUILD_DIR%\bin"
+REM Do not `dir /b` the output folder here: the file list goes through cmd's OEM
+REM code page and can trip the parser, turning a successful build into a non-zero
+REM exit code at the very last line.
 exit /b 0

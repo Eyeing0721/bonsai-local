@@ -1,6 +1,8 @@
 # 构建产物
 build/work/
 build/*.log
+build/bench-logs/
+build/bench-engines.json
 dist/
 *.spec.bak
 

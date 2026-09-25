@@ -1,0 +1,57 @@
+把下面的汇编还原成 C 函数，说明参数、返回值、控制流，并指出用到的 ABI 约定。
+
+mflr r0
+stw r0, 8(r1)
+stwu r1, -16(r1)
+li r4, 0
+cmpwi r3, 0
+ble .L2
+.L1:
+addi r4, r4, 1
+cmpw r4, r3
+blt .L1
+.L2:
+mr r3, r4
+addi r1, r1, 16
+lwz r0, 8(r1)
+mtlr r0
+blr
+---
+下面是一段已去符号的 x86-64 反汇编（System V ABI）。请判断它在做什么、属于哪个算法族，并给出等价的 C 代码。
+
+mov eax, edi
+imul eax, eax, 2654435761
+xor eax, edx
+rol eax, 13
+ret
+---
+把下面的 ARM64 汇编还原成 C 函数，说明每条指令的作用和返回值是怎么算出来的。
+
+strlen_arm64:
+mov x1, x0
+.L1:
+ldrb w2, [x1], #1
+cbnz w2, .L1
+sub x0, x1, x0
+sub x0, x0, #1
+ret
+---
+下面这段 x86-64 反汇编是编译器为某个很常见的 C 表达式生成的。请判断原始 C 表达式是什么，并解释为什么要多出那一条指令、少写会有什么不同。
+
+mov eax, edi
+shr eax, 31
+add eax, edi
+sar eax, 1
+ret
+---
+把下面的 x86-64 汇编还原成 C 函数，给出函数签名，并指出哪个寄存器参数没有被使用。
+
+xor eax, eax
+test esi, esi
+jle .L2
+.L1:
+add eax, edx
+dec esi
+jne .L1
+.L2:
+ret

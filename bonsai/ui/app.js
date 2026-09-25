@@ -293,6 +293,9 @@ async function poll() {
     $('boot-error').classList.add('hidden');
     setBoot(p);
   }
+
+  // 设置面板开着的时候跟着刷新，这样后台导入/建索引的进度能自己走
+  if (!$('settings').classList.contains('hidden')) renderKb();
 }
 
 /* ──────────────────────────────── 设置 ─────────────────────────────── */
@@ -316,8 +319,158 @@ function renderSettings() {
   });
   $('path-value').textContent = s.data_dir || '—';
   $('token-value').textContent = TOKEN ? TOKEN.slice(0, 10) + '••••••••••••••••••••••' : '（远程访问时请输入令牌）';
+  renderLoras();
+  renderKb();
   updateRemoteUI();
   updateEnv();
+}
+
+/* ── 我的资料 ──────────────────────────────────────────────────────────
+   两档检索：关键词（零下载，永远可用）和语义（多下 610 MB）。界面上不出现
+   这两个词的技术含义，只说它们各自解决什么问题。 */
+function renderKb() {
+  const K = state.knowledge || { docs: [], chunks: 0 };
+  const box = $('kb-list');
+  box.innerHTML = '';
+
+  const docs = K.docs || [];
+  if (!docs.length) {
+    box.innerHTML = `<p class="kb-empty muted">还没有资料。加进来之后，它回答前会先查一遍。</p>`;
+  } else {
+    docs.forEach((d) => {
+      const row = document.createElement('div');
+      row.className = 'kb-doc';
+      row.innerHTML =
+        `<div class="kb-doc-info"><b>${esc(d.name)}</b>` +
+        `<span class="muted small">${(d.chars / 1000).toFixed(1)} 千字 · ${d.chunks} 段</span></div>` +
+        `<button class="mini" title="移除">移除</button>`;
+      row.querySelector('button').onclick = async () => {
+        const r = await api('/app/kb/remove', { method: 'POST', body: JSON.stringify({ id: d.id }) });
+        if (r.ok) { toast('已移除'); await poll(); renderKb(); }
+        else toast(r.data.error || '移除失败');
+      };
+      box.appendChild(row);
+    });
+    const stat = document.createElement('p');
+    stat.className = 'muted small';
+    stat.textContent = `共 ${docs.length} 份资料、${K.chunks} 段`;
+    box.appendChild(stat);
+  }
+
+  $('kb-clear').classList.toggle('hidden', !docs.length);
+  $('kb-toggle').checked = K.enabled !== false;
+  $('kb-state').textContent = docs.length
+    ? (K.enabled !== false ? '回答前会查这些资料' : '已关闭，当普通聊天用')
+    : '加入资料后自动生效';
+
+  const ready = K.dense_ready;
+  $('kb-dense').checked = !!K.dense;
+  $('kb-dense').disabled = !!K.busy;
+  $('kb-dense-state').textContent = K.dense
+    ? '已开启，换了说法也能查到'
+    : (ready ? '更懂意思的检索（模型已下载）' : '更懂意思的检索（需下载 610 MB）');
+
+  const note = $('kb-note');
+  if (K.error) {
+    note.textContent = K.error;
+    note.className = 'muted small bad';
+  } else if (K.busy) {
+    note.textContent = K.busy + '…';
+    note.className = 'muted small';
+  } else {
+    note.textContent = K.dense
+      ? '关键词和语义两路同时用，结果合并后取最相关的几段。'
+      : '关键词检索已经能查 CVE 编号、函数名这类精确内容。打开上面这一项会额外下载 610 MB 的语义模型，让「换了说法也能查到」。';
+    note.className = 'muted small';
+  }
+}
+
+/* 助手风格：预设 = 挑好的组合 + 调好的权重。
+   用户选的是「像一个什么样的人说话」，rank 和 scale 不出现。 */
+function renderLoras() {
+  const box = $('lora-list');
+  const L = (state.loras) || { items: [], presets: { items: [], current: 'default' } };
+  const have = new Map((L.items || []).map((i) => [i.id, i]));
+  const P = L.presets || { items: [], current: 'default' };
+  box.innerHTML = '';
+
+  if (L.core) {
+    const mb = (L.core.size / 2 ** 20).toFixed(1);
+    $('lora-core').textContent = L.core.active
+      ? `当前风格带了去拒答适配器（${mb} MB）。只有「默认」不带 —— 那个要的是模型原本的样子。`
+      : `当前是「默认」，没挂去拒答适配器（${mb} MB），回答更接近模型原本的样子。`;
+  }
+
+  (P.items || []).forEach((p) => {
+    const on = P.current === p.id;
+    const el = document.createElement('div');
+    el.className = 'lora' + (on ? ' on' : '');
+    const tags = [];
+    if (p.hint) tags.push(`<span class="tag">${esc(p.hint)}</span>`);
+    if (p.abliterated === false) tags.push(`<span class="tag">原味</span>`);
+    if (!p.available) tags.push(`<span class="tag">需要先安装</span>`);
+
+    el.innerHTML =
+      `<div class="check">✓</div>` +
+      `<div class="info"><b>${esc(p.name)}</b><span>${esc(p.desc || '')}</span>${tags.join('')}</div>` +
+      `<div class="act"></div>`;
+    const act = el.querySelector('.act');
+
+    if (!p.available) {
+      (p.missing || []).forEach((mid) => {
+        const it = have.get(mid);
+        const b = document.createElement('button');
+        b.className = 'mini go';
+        b.textContent = it ? `安装 ${it.name}` : '安装';
+        if (it && it.size) b.textContent += `（${(it.size / 2 ** 20).toFixed(0)}MB）`;
+        b.onclick = async () => {
+          b.disabled = true;
+          b.textContent = '安装中…';
+          const r = await api('/app/loras/install', { method: 'POST', body: JSON.stringify({ id: mid }) });
+          if (!r.ok || r.data.ok === false) {
+            toast(r.data.error || '安装失败');
+            b.disabled = false;
+          } else {
+            toast('正在下载，进度见上方');
+          }
+        };
+        act.appendChild(b);
+      });
+    } else if (!on) {
+      const b = document.createElement('button');
+      b.className = 'mini';
+      b.textContent = '使用';
+      b.onclick = async () => {
+        const r = await api('/app/loras/preset', { method: 'POST', body: JSON.stringify({ id: p.id }) });
+        if (r.ok) { toast('正在换风格…'); setTimeout(poll, 1500); }
+        else toast(r.data.error || '切换失败');
+      };
+      act.appendChild(b);
+    }
+    box.appendChild(el);
+  });
+
+  // 自定义模式才需要逐个勾选，所以只在选中它时展开，平时不占地方。
+  if (P.current === 'custom') {
+    const adv = document.createElement('div');
+    adv.className = 'lora-adv';
+    (L.items || []).forEach((it) => {
+      if (!it.installed) return;
+      const on = (L.enabled || []).includes(it.id);
+      const row = document.createElement('label');
+      row.className = 'lora-mini' + (on ? ' on' : '');
+      row.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}> ` +
+        `<span>${esc(it.name)}</span><em>${it.size ? (it.size / 2 ** 20).toFixed(0) + ' MB' : ''}</em>`;
+      row.querySelector('input').onchange = async (e) => {
+        const r = await api('/app/loras/toggle', {
+          method: 'POST', body: JSON.stringify({ id: it.id, enabled: e.target.checked }),
+        });
+        if (r.ok) { toast('正在换风格…'); setTimeout(poll, 1500); } else toast('操作失败');
+      };
+      adv.appendChild(row);
+    });
+    box.appendChild(adv);
+  }
 }
 
 function updateEnv() {
@@ -389,9 +542,54 @@ function bind() {
 
   $('pick-folder').onclick = async () => {
     toast('请在弹出的窗口里选择文件夹…', 3200);
-    const r = await api('/app/pick-folder', { method: 'POST', body: '{}' });
+    const r = await api('/app/pick-folder', { method: 'POST', body: JSON.stringify({ kind: 'data' }) });
     if (r.ok && r.data.path) await saveSettings({ data_dir: r.data.path });
     else if (r.data && r.data.error) toast(r.data.error);
+  };
+
+  /* ── 我的资料 ── */
+  $('kb-add-file').onclick = async () => {
+    const picked = await api('/app/pick-file', { method: 'POST', body: JSON.stringify({ kind: 'docs' }) });
+    if (!picked.ok || !picked.data.path) { if (picked.data && picked.data.error) toast(picked.data.error); return; }
+    toast('正在读入…', 2500);
+    const r = await api('/app/kb/add', { method: 'POST', body: JSON.stringify({ path: picked.data.path }) });
+    if (!r.ok || r.data.ok === false) return toast(r.data.error || '添加失败');
+    toast('已加入');
+    await poll(); renderKb();
+  };
+
+  $('kb-add-folder').onclick = async () => {
+    const picked = await api('/app/pick-folder', { method: 'POST', body: JSON.stringify({ kind: 'docs' }) });
+    if (!picked.ok || !picked.data.path) { if (picked.data && picked.data.error) toast(picked.data.error); return; }
+    const r = await api('/app/kb/add', { method: 'POST', body: JSON.stringify({ path: picked.data.path, folder: true }) });
+    if (!r.ok || r.data.ok === false) return toast(r.data.error || '添加失败');
+    toast('正在后台导入整个文件夹…', 3000);
+    await poll(); renderKb();
+  };
+
+  $('kb-clear').onclick = async () => {
+    if (!confirm('清空后这些资料就要重新添加。继续？')) return;
+    const r = await api('/app/kb/clear', { method: 'POST', body: '{}' });
+    if (r.ok) { toast('已清空'); await poll(); renderKb(); }
+  };
+
+  $('kb-toggle').onchange = async (e) => {
+    const r = await api('/app/kb/enabled', { method: 'POST', body: JSON.stringify({ enabled: e.target.checked }) });
+    if (r.ok) { await poll(); renderKb(); }
+    else toast(r.data.error || '操作失败');
+  };
+
+  $('kb-dense').onchange = async (e) => {
+    const want = e.target.checked;
+    if (want && !(state.knowledge || {}).dense_ready) {
+      if (!confirm('这一项需要先下载 610 MB 的语义模型，只下一次。现在开始？')) {
+        e.target.checked = false; return;
+      }
+    }
+    const r = await api('/app/kb/dense', { method: 'POST', body: JSON.stringify({ enabled: want }) });
+    if (!r.ok) { toast(r.data.error || '操作失败'); e.target.checked = !want; return; }
+    toast(want ? '正在准备语义检索…' : '已关闭语义检索', 2600);
+    await poll(); renderKb();
   };
 
   $('remote-toggle').onchange = async (e) => {

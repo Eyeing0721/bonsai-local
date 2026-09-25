@@ -1,0 +1,26 @@
+把下面这段 PowerPC 汇编还原成 C 函数，给出函数名、参数类型和逐行含义。只输出代码和分析，不要客套。
+
+mflr r0
+stw r0, 8(r1)
+stwu r1, -16(r1)
+li r4, 0
+cmpwi r3, 0
+ble .L2
+.L1:
+addi r4, r4, 1
+cmpw r4, r3
+blt .L1
+.L2:
+mr r3, r4
+addi r1, r1, 16
+lwz r0, 8(r1)
+mtlr r0
+blr
+---
+这是一个逆向工程问题。下面是一段已去掉符号的 x86-64 反汇编，请问它在做什么？属于什么算法族？
+
+mov eax, edi
+imul eax, eax, 2654435761
+xor eax, edx
+rol eax, 13
+ret

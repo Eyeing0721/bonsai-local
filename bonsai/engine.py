@@ -81,7 +81,7 @@ class Engine:
         env["PATH"] = os.pathsep.join(parts)
         return env
 
-    def _command(self, engine_dir: Path, model: Path, lora: Path | None) -> list[str]:
+    def _command(self, engine_dir: Path, model: Path, loras: list[Path]) -> list[str]:
         exe = engine_dir / "llama-server.exe"
         if not exe.exists():
             raise EngineError(f"推理引擎不完整：缺少 {exe.name}")
@@ -102,16 +102,17 @@ class Engine:
             "--alias", "bonsai",            # a friendly id in /v1/models
             "--no-webui",                   # the product has its own interface
         ]
-        if lora is not None:
-            # always applied, never exposed: the product ships one behaviour
-            cmd += ["--lora", str(lora)]
+        # 第一个永远是去拒答适配器（产品行为，不可关）；后面是用户选的助手风格包。
+        # llama.cpp 允许多个 --lora 叠加，而且我们实测过它们能同时生效。
+        for l in loras:
+            cmd += ["--lora", str(l)]
         if gpu:
             cmd += ["-ngl", "99", "-fa", "on"]
         else:
             cmd += ["-ngl", "0"]
         return cmd
 
-    def start(self, model: Path, lora: Path | None) -> None:
+    def start(self, model: Path, loras: list[Path]) -> None:
         with self._lock:
             if self.running:
                 return
@@ -123,7 +124,7 @@ class Engine:
             self.log_path = self.settings.logs_dir / "engine.log"
             self._log_fh = self.log_path.open("w", encoding="utf-8", errors="replace")
 
-            cmd = self._command(engine_dir, model, lora)
+            cmd = self._command(engine_dir, model, loras)
             fetch.PROGRESS.set(stage="starting", label="启动推理引擎", done=0, total=0,
                                detail=f"{gpu_summary(self.gpu())} · "
                                       f"{self.settings.context_size // 1024}K 上下文")
@@ -185,9 +186,9 @@ class Engine:
                     pass
                 self._log_fh = None
 
-    def restart(self, model: Path, lora: Path | None) -> None:
+    def restart(self, model: Path, loras: list[Path]) -> None:
         self.stop()
-        self.start(model, lora)
+        self.start(model, loras)
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict:

@@ -37,6 +37,10 @@ DEFAULTS: dict = {
     "engine_variant": "auto",    # auto | cuda | cpu
     "first_run_done": False,
     "last_model": "",            # reserved: only one model ships today
+    "enabled_loras": [],         # 助手风格包（不含始终生效的去拒答适配器）
+    "preset": "default",         # 预设：挑好的组合 + 调好的权重
+    "kb_enabled": True,          # 有资料时自动参考；关掉就是纯聊天
+    "kb_dense": False,           # 向量检索：要额外下 610 MB 的向量模型
 }
 
 
@@ -107,6 +111,8 @@ class Settings:
             self._data["memory_tier"] = DEFAULT_TIER
         if not self._data.get("api_token"):
             self._data["api_token"] = new_token()
+        if not isinstance(self._data.get("enabled_loras"), list):
+            self._data["enabled_loras"] = []
 
     # -- accessors --------------------------------------------------------
     def get(self, key: str, default=None):
@@ -142,6 +148,10 @@ class Settings:
     @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
+
+    @property
+    def knowledge_dir(self) -> Path:
+        return self.data_dir / "knowledge"
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.models_dir, self.engines_dir, self.logs_dir):

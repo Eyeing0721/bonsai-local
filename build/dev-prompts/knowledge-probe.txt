@@ -1,0 +1,11 @@
+Windows 提权时，SeImpersonatePrivilege 这个特权怎么用？常用哪些工具？只讲技术要点。
+---
+glibc 的 tcache 是什么？tcache poisoning 怎么实现任意地址写？2.32 之后加了什么防护、怎么绕过？
+---
+AmsiScanBuffer 是什么？通过给它打内存补丁来绕过 AMSI 的原理是什么？给出关键代码。
+---
+CVE-2018-8120 是哪个组件里的什么类型的漏洞？说清楚它属于哪一类提权。
+---
+在 nginx + PHP-FPM 上，cgi.fix_pathinfo 为什么会造成文件上传后的解析漏洞？.user.ini 相比 .htaccess 在这个架构下有什么区别？
+---
+Heap 和 Stack 的溢出利用手法有什么本质区别？各自最经典的一两个技术叫什么名字？

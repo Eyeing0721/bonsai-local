@@ -108,6 +108,44 @@
       </section>
 
       <section class="group">
+        <h3>助手风格</h3>
+        <p class="muted">挑一个它说话的样子。可以多选，效果会叠加；换风格会重新加载模型，需要十几秒。</p>
+        <div class="lora-list" id="lora-list"></div>
+        <div class="row-actions round-actions">
+          <button class="btn" id="add-lora">添加我自己的风格包…</button>
+        </div>
+        <p class="muted small" id="lora-core">只有「默认」不带去拒答适配器。</p>
+      </section>
+
+      <section class="group">
+        <h3>我的资料</h3>
+        <p class="muted">把文件或文件夹加进来，它回答前会先在这里查一遍。资料只存在这台电脑上，不会上传。</p>
+        <div class="kb-list" id="kb-list"></div>
+        <div class="row-actions round-actions">
+          <button class="btn" id="kb-add-file">添加文件…</button>
+          <button class="btn" id="kb-add-folder">添加文件夹…</button>
+          <button class="btn danger hidden" id="kb-clear">全部清空</button>
+        </div>
+
+        <div class="switch-row">
+          <label class="switch">
+            <input type="checkbox" id="kb-toggle">
+            <span class="slider"></span>
+          </label>
+          <span id="kb-state" class="muted">已开启</span>
+        </div>
+
+        <div class="switch-row">
+          <label class="switch">
+            <input type="checkbox" id="kb-dense">
+            <span class="slider"></span>
+          </label>
+          <span id="kb-dense-state" class="muted">更懂意思的检索</span>
+        </div>
+        <p class="muted small" id="kb-note">关键词检索已经能查 CVE 编号、函数名这类精确内容。打开上面这一项会额外下载 610 MB 的语义模型，让「换了说法也能查到」。</p>
+      </section>
+
+      <section class="group">
         <h3>存储位置</h3>
         <p class="muted">模型和记录存放的文件夹。换位置后会自动重新检查。</p>
         <div class="path-row">
