@@ -29,7 +29,8 @@ DIST = ROOT / "dist"
 ENGINES_OUT = DIST / "engines"
 
 # 引擎构建产物的来源。发布时改这两个环境变量指向自己的构建即可。
-CUDA_BIN = Path(os.environ.get("BONSAI_CUDA_BIN", r"E:\src\llama-prism\build-cuda\bin"))
+# CUDA 用 build-cuda-multi：多架构（sm_75..sm_120），不再是只支持 40 系的单架构版本。
+CUDA_BIN = Path(os.environ.get("BONSAI_CUDA_BIN", r"E:\src\llama-prism\build-cuda-multi\bin"))
 CPU_BIN = Path(os.environ.get("BONSAI_CPU_BIN", r"E:\src\llama-prism\build-cpu\bin"))
 CUDA_RUNTIME = Path(os.environ.get("BONSAI_CUDA_RUNTIME", r"E:\cuda\bin"))
 
@@ -163,11 +164,11 @@ def main() -> int:
     if args.with_engines:
         if args.repo == "OWNER/REPO":
             print("警告：--repo 还是占位值，生成的下载地址不可用。")
-        cuda = make_engine_zip("cuda-ada", CUDA_BIN,
+        cuda = make_engine_zip("cuda", CUDA_BIN,
                                ENGINE_FILES_COMMON + ENGINE_FILES_CUDA,
                                [CUDA_RUNTIME / n for n in CUDA_DLLS], args.repo)
         if cuda:
-            manifest["cuda-ada"] = cuda
+            manifest["cuda"] = cuda
         cpu = make_engine_zip("cpu", CPU_BIN, ENGINE_FILES_COMMON, None, args.repo)
         if cpu:
             manifest["cpu"] = cpu

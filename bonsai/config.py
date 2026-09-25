@@ -165,24 +165,62 @@ def new_token() -> str:
 
 
 # ------------------------------------------------------------------ hardware
+# 我们为哪些计算能力编了 CUDA 内核（见 build/make_release.py 的架构列表）。
+# 低于这个值就不下载 GPU 引擎：下了也用不了，还会白等几分钟。
+MIN_CUDA_COMPUTE_CAP = 75          # sm_75 = Turing（RTX 20 系）
+
+
+def _nvidia_smi(exe: str, query: str) -> str | None:
+    try:
+        out = subprocess.run(
+            [exe, f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip().splitlines()[0]
+    except Exception:                                           # noqa: BLE001
+        pass
+    return None
+
+
 def detect_gpu() -> dict | None:
     """Best-effort NVIDIA query. Absence is not an error: we fall back to CPU."""
     exe = shutil.which("nvidia-smi")
     if not exe:
         return None
-    try:
-        out = subprocess.run(
-            [exe, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=8,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if out.returncode != 0 or not out.stdout.strip():
-            return None
-        first = out.stdout.strip().splitlines()[0]
-        name, _, vram = first.rpartition(",")
-        return {"name": name.strip(), "vram_mb": int(vram.strip())}
-    except Exception:
+
+    base = _nvidia_smi(exe, "name,memory.total")
+    if not base:
         return None
+    name, _, vram = base.rpartition(",")
+
+    # compute_cap 需要较新的驱动；拿不到就当作"未知"，仍然尝试 GPU
+    cap_raw = _nvidia_smi(exe, "compute_cap")
+    cap: int | None = None
+    if cap_raw:
+        try:
+            cap = int(round(float(cap_raw) * 10))       # "8.9" -> 89
+        except ValueError:
+            cap = None
+
+    return {
+        "name": name.strip(),
+        "vram_mb": int(vram.strip() or 0),
+        "compute_cap": cap,
+        "cuda_ok": cap is None or cap >= MIN_CUDA_COMPUTE_CAP,
+    }
+
+
+def gpu_summary(gpu: dict | None) -> str:
+    """一句话描述运行方式，给界面用。"""
+    if not gpu:
+        return "CPU（没有检测到 NVIDIA 显卡）"
+    cap = gpu.get("compute_cap")
+    cap_txt = f" · 计算能力 {cap / 10:.1f}" if cap else ""
+    if not gpu.get("cuda_ok", True):
+        return f"CPU（{gpu['name']} 的计算能力 {cap / 10:.1f} 低于 {MIN_CUDA_COMPUTE_CAP / 10:.1f}，用不了 GPU 加速）"
+    return f"GPU · {gpu['name']}{cap_txt}"
 
 
 def free_port() -> int:

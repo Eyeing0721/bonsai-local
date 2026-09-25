@@ -17,7 +17,7 @@ import urllib.request
 from pathlib import Path
 
 from . import fetch
-from .config import Settings, detect_gpu, free_port
+from .config import Settings, detect_gpu, free_port, gpu_summary
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -125,7 +125,7 @@ class Engine:
 
             cmd = self._command(engine_dir, model, lora)
             fetch.PROGRESS.set(stage="starting", label="启动推理引擎", done=0, total=0,
-                               detail=f"{'GPU' if self.gpu() else 'CPU'} · "
+                               detail=f"{gpu_summary(self.gpu())} · "
                                       f"{self.settings.context_size // 1024}K 上下文")
             self.proc = subprocess.Popen(
                 cmd, cwd=str(engine_dir), stdout=self._log_fh,

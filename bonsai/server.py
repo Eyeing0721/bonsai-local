@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import fetch
 from .config import (APP_TITLE, APP_VERSION, MEMORY_TIERS, Settings,
-                     local_ip, resource_dir)
+                     gpu_summary, local_ip, resource_dir)
 
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate",
               "proxy-authorization", "te", "trailers", "transfer-encoding",
@@ -98,6 +98,7 @@ class App:
             "tunnel": self.tunnel.status(),
             "error": self.last_error,
             "gpu": gpu,
+            "gpu_text": gpu_summary(gpu),
             "context": s.context_size,
             "tiers": {k: {"label": v["label"], "hint": v["hint"], "ctx": v["ctx"]}
                       for k, v in MEMORY_TIERS.items()},
@@ -255,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
             restart = True            # the model may not be where we are looking
 
         variant = data.get("engine_variant")
-        if variant in ("auto", "cpu", "cuda-ada") and variant != s.get("engine_variant"):
+        if variant in ("auto", "cpu", "cuda") and variant != s.get("engine_variant"):
             s.set("engine_variant", variant)
             restart = True
 

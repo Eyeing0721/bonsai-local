@@ -266,10 +266,27 @@ def load_engine_manifest() -> dict[str, dict]:
 
 
 def pick_engine_variant(settings: Settings, gpu: dict | None) -> str:
+    """选择引擎变体："cuda" 或 "cpu"。
+
+    这个 CUDA 引擎是多架构的（sm_75..sm_120），所以不再叫 cuda-ada；
+    旧设置里可能还留着 cuda-ada，这里做一次兼容。
+    """
     pref = settings.get("engine_variant") or "auto"
-    if pref != "auto":
-        return pref
-    return "cuda-ada" if gpu else "cpu"
+    if pref in ("cuda", "cuda-ada"):
+        return "cuda"
+    if pref == "cpu":
+        return "cpu"
+    # 显卡太老就不下 GPU 引擎：下了也用不了，还会让用户白等几分钟
+    if not gpu or not gpu.get("cuda_ok", True):
+        return "cpu"
+    return "cuda"
+
+
+# 旧版本发布过的名字，仍然认，避免用户升级后又要重下一遍
+VARIANT_ALIASES: dict[str, tuple[str, ...]] = {
+    "cuda": ("cuda", "cuda-ada"),
+    "cpu": ("cpu",),
+}
 
 
 def engine_dir_for(settings: Settings, variant: str) -> Path:
@@ -303,7 +320,9 @@ def ensure_engine(settings: Settings, variant: str, progress: Progress,
 
     # A GPU build may simply not exist in this release. Degrade to CPU and say so,
     # rather than failing the whole app on a missing key.
-    chosen = variant if variant in manifest else ("cpu" if "cpu" in manifest else None)
+    chosen = next((c for c in VARIANT_ALIASES.get(variant, (variant,)) if c in manifest), None)
+    if chosen is None and "cpu" in manifest:
+        chosen = "cpu"
     if chosen is None:
         raise RuntimeError("引擎清单里没有任何可用构建（含："
                            + "、".join(sorted(manifest)) + "）")

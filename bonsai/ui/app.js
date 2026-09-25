@@ -278,7 +278,7 @@ async function poll() {
     booted = true;
     $('boot').classList.add('hidden');
     $('app').classList.remove('hidden');
-    $('chip-model').textContent = state.gpu ? state.gpu.name : 'CPU 运行';
+    $('chip-model').textContent = state.gpu_text || (state.gpu ? state.gpu.name : 'CPU 运行');
     updateRemoteUI();
     updateEnv();
     $('input').focus();
@@ -323,8 +323,8 @@ function renderSettings() {
 function updateEnv() {
   const e = state.engine || {};
   const rows = [
-    ['运行方式', state.gpu ? `GPU · ${state.gpu.name}` : 'CPU（没有检测到 NVIDIA 显卡）'],
-    ['显存', state.gpu ? `${(state.gpu.vram_mb / 1024).toFixed(0)} GB` : '—'],
+    ['运行方式', state.gpu_text || (state.gpu ? state.gpu.name : 'CPU（没有检测到 NVIDIA 显卡）')],
+    ['显存', state.gpu && state.gpu.vram_mb ? `${(state.gpu.vram_mb / 1024).toFixed(0)} GB` : '—'],
     ['记忆容量', `${(state.context || 0) / 1024}K`],
     ['版本', state.version || '—'],
   ];
