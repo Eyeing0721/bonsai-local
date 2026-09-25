@@ -37,10 +37,13 @@ CUDA_RUNTIME = Path(os.environ.get("BONSAI_CUDA_RUNTIME", r"E:\cuda\bin"))
 CUDA_DLLS = ["cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll", "nvJitLink_120_0.dll"]
 
 # 引擎包里要带的文件（引擎目录里的其它东西是调试工具，不分发）
-ENGINE_FILES = [
+ENGINE_FILES_COMMON = [
     "llama-server.exe", "llama-server-impl.dll", "llama-common.dll",
     "llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "mtmd.dll",
 ]
+# CUDA 构建多一个后端 DLL。第一版漏了它，结果用户拿到的是
+# 「退出码 0xC0000135（找不到 DLL）+ 日志完全空白」—— 所以现在打包完会真的试着启动一次。
+ENGINE_FILES_CUDA = ["ggml-cuda.dll"]
 
 
 def sha256(path: Path) -> str:
@@ -69,8 +72,47 @@ def build_exe(console: bool) -> Path:
     return exe
 
 
-def make_engine_zip(variant: str, src: Path, extra_dlls: list[Path] | None,
-                    repo: str) -> dict:
+def verify_engine_zip(zip_path: Path) -> bool:
+    """把包解到临时目录里，真的启动一次 llama-server。
+
+    缺一个后端 DLL 的表现是「退出码 0xC0000135 + 日志空白」，
+    从用户的反馈里几乎不可能定位。所以在构建阶段就把它挡住。
+    """
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="bonsai-verify-") as td:
+        with zipfile.ZipFile(zip_path) as z:
+            # 铺平解压：必须和应用运行时的做法一致（fetch.ensure_engine 也是铺平的），
+            # 否则自检通过的布局和用户实际拿到的布局不是同一个东西。
+            for member in z.infolist():
+                name = Path(member.filename).name
+                if not name:
+                    continue
+                with z.open(member) as src, (Path(td) / name).open("wb") as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+        exe = Path(td) / "llama-server.exe"
+        if not exe.exists():
+            print("   自检失败：包里没有 llama-server.exe")
+            return False
+        env = dict(os.environ)
+        env["PATH"] = td + os.pathsep + env.get("PATH", "")
+        try:
+            r = subprocess.run([str(exe), "--help"], capture_output=True,
+                               timeout=180, env=env)
+        except Exception as e:                                  # noqa: BLE001
+            print(f"   自检异常：{e}")
+            return False
+        if r.returncode == 0:
+            return True
+        code = r.returncode & 0xFFFFFFFF
+        hint = "（找不到 DLL，多半漏了后端 DLL）" if code == 0xC0000135 else ""
+        print(f"   自检失败：退出码 {r.returncode} / 0x{code:08X}{hint}")
+        return False
+
+
+def make_engine_zip(variant: str, src: Path, required: list[str],
+                    extra_dlls: list[Path] | None, repo: str) -> dict:
     print(f"== 引擎包 {variant} ==")
     if not (src / "llama-server.exe").exists():
         print(f"   跳过：找不到 {src}\\llama-server.exe")
@@ -78,19 +120,26 @@ def make_engine_zip(variant: str, src: Path, extra_dlls: list[Path] | None,
     ENGINES_OUT.mkdir(parents=True, exist_ok=True)
     out = ENGINES_OUT / f"engine-{variant}.zip"
 
-    missing = [f for f in ENGINE_FILES if not (src / f).exists()]
+    missing = [f for f in required if not (src / f).exists()]
     if missing:
         print(f"   跳过：缺少 {', '.join(missing)}")
         return {}
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for name in ENGINE_FILES:
+        for name in required:
             z.write(src / name, name)
         for dll in extra_dlls or []:
             if dll.exists():
-                z.write(dll, f"cuda/{dll.name}")
+                # 平铺，不留 cuda/ 子目录：Windows 按可执行文件所在目录找 DLL，
+                # 应用运行时也是铺平解压的，两边保持完全一致
+                z.write(dll, dll.name)
             else:
                 print(f"   警告：缺少 {dll}")
+
+    if not verify_engine_zip(out):
+        out.unlink(missing_ok=True)
+        raise SystemExit(f"引擎包 {variant} 自检未通过，已放弃（不要发布这个包）")
+    print("   自检通过：解压后能正常启动")
 
     info = {"url": f"https://github.com/{repo}/releases/latest/download/{out.name}",
             "bytes": out.stat().st_size, "sha256": sha256(out)}
@@ -115,10 +164,11 @@ def main() -> int:
         if args.repo == "OWNER/REPO":
             print("警告：--repo 还是占位值，生成的下载地址不可用。")
         cuda = make_engine_zip("cuda-ada", CUDA_BIN,
+                               ENGINE_FILES_COMMON + ENGINE_FILES_CUDA,
                                [CUDA_RUNTIME / n for n in CUDA_DLLS], args.repo)
         if cuda:
             manifest["cuda-ada"] = cuda
-        cpu = make_engine_zip("cpu", CPU_BIN, None, args.repo)
+        cpu = make_engine_zip("cpu", CPU_BIN, ENGINE_FILES_COMMON, None, args.repo)
         if cpu:
             manifest["cpu"] = cpu
         if manifest:
