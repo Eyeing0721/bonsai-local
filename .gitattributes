@@ -1,0 +1,14 @@
+# 批处理必须用 CRLF 检出。
+#
+# cmd.exe 解析 .bat 时依赖 CRLF 定位行边界；纯 LF 的文件会让它丢失行边界，
+# 把半行当成命令去执行。2026-09-27 实际踩到过：满屏「不是内部或外部命令」，
+# 还因为一行被切断而误开了一个 python 交互式解释器。
+#
+# 另外 .bat 里的非 ASCII 字符必须按系统 ANSI 代码页（简中是 cp936）保存，
+# 不能是 UTF-8 —— cmd 不会按 UTF-8 读它，中文会变成乱码并进一步搞乱解析。
+# 本仓库里的 .bat 因此只写 ASCII，或写成 cp936。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 这个文件自己必须是 LF：带 \r 的规则行可能被解析成不同的模式。
+.gitattributes text eol=lf
