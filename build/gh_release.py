@@ -20,6 +20,7 @@ import json
 import mimetypes
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -54,6 +55,52 @@ def call(method: str, url: str, tok: str, payload: dict | None = None,
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:400]
         raise SystemExit(f"{method} {url} -> HTTP {e.code}\n{detail}") from None
+
+
+def upload_asset(repo: str, rel_id: int, path: Path, tok: str,
+                 attempts: int = 6) -> dict:
+    """流式上传一个资产，失败就重试。
+
+    以前这里是 `data = fh.read()` 再一次性 sendall：671 MB 的引擎包要整个读进
+    内存，而且**一次网络抖动就全废**。实际撞到过 —— engine-cuda.zip 传到一半
+    ssl.SSLEOFError，整个发布只上去了一个 exe。
+
+    现在把文件对象直接当请求体交给 urllib（它会按块读），并且显式给出
+    Content-Length，这样走的是普通定长上传而不是 chunked（上传接口对后者
+    并不总是买账）。重试之间退避，且每次重试前都重新确认一下有没有留下
+    同名残骸 —— 上一次传到一半失败可能已经建了条目。
+    """
+    name = path.name
+    size = path.stat().st_size
+    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    url = (f"{UPLOADS}/repos/{repo}/releases/{rel_id}/assets"
+           f"?name={urllib.parse.quote(name)}")
+    last: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            with path.open("rb") as fh:
+                req = urllib.request.Request(url, data=fh, method="POST")
+                req.add_header("Authorization", f"Bearer {tok}")
+                req.add_header("Accept", "application/vnd.github+json")
+                req.add_header("User-Agent", "bonsai-release")
+                req.add_header("Content-Type", ctype)
+                req.add_header("Content-Length", str(size))
+                with urllib.request.urlopen(req, timeout=3600) as r:
+                    return json.loads(r.read() or b"{}")
+        except Exception as e:                                  # noqa: BLE001
+            last = e
+            print(f"    第 {i}/{attempts} 次失败：{type(e).__name__}: {e}")
+            if i < attempts:
+                time.sleep(min(2 ** i, 30))
+    raise SystemExit(f"上传 {name} 失败（试了 {attempts} 次）：{last}")
+
+
+def drop_existing(repo: str, rel_id: int, name: str, tok: str) -> None:
+    """删掉同名资产，给重新上传让路（发布脚本可以反复跑）。"""
+    rel = call("GET", f"{API}/repos/{repo}/releases/{rel_id}", tok)
+    for a in rel.get("assets", []):
+        if a["name"] == name:
+            call("DELETE", f"{API}/repos/{repo}/releases/assets/{a['id']}", tok)
 
 
 def section_for(text: str, tag: str) -> str:
@@ -125,11 +172,8 @@ def main() -> int:
                 call("DELETE", f"{API}/repos/{args.repo}/releases/assets/{have[name]['id']}", tok)
             size = path.stat().st_size
             print(f"  上传 {name}  ({size / 2**20:.1f} MB)")
-            ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
-            with path.open("rb") as fh:
-                data = fh.read()
-            call("POST", f"{UPLOADS}/repos/{args.repo}/releases/{rel['id']}/assets"
-                         f"?name={urllib.parse.quote(name)}", tok, raw=data, ctype=ctype)
+            drop_existing(args.repo, rel["id"], name, tok)   # 上次失败的残骸
+            upload_asset(args.repo, rel["id"], path, tok)
 
     final = call("GET", f"{API}/repos/{args.repo}/releases/{rel['id']}", tok)
     print("\n最终资产:")
