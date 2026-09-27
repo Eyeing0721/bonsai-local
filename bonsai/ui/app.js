@@ -265,6 +265,11 @@ async function poll() {
 
   const p = state.progress || {};
   if (p.stage === 'error' || state.error) {
+    // 这里必须自己把准备页亮出来、把聊天页收起来。之前只改了文案，于是当
+    // 「重启失败」来得比轮询间隔还快时，中间那个 ready=False 的状态一次都没被
+    // 采样到，#boot 还挂着 hidden —— 报错看不见，聊天页却还开着，用户以为能用。
+    $('boot').classList.remove('hidden');
+    $('app').classList.add('hidden');
     $('boot-title').textContent = '没能启动';
     $('boot-sub').textContent = '下面是具体原因。';
     $('boot-progress').classList.add('hidden');
@@ -273,16 +278,28 @@ async function poll() {
     return;
   }
 
-  const ready = state.engine && state.engine.running && p.stage === 'ready';
-  if (ready && !booted) {
-    booted = true;
+  // 就绪与否只认后端那个单调标志，**不要**看 progress.stage：
+  // 开远程访问会把 stage 临时改成 "starting"（准备 cloudflared），
+  // 拿它当判据会让界面在准备页和聊天页之间来回跳，而且跳过之后就回不来了。
+  const ready = !!state.engine_ready;
+  // 可见性必须每次都跟着 ready 走，**不能**把显示聊天页那一步挂在一个一次性开关上。
+  //
+  // 真实踩到的卡死：用户在设置里点「开启远程访问」时，后端会把全局进度设成
+  // stage="starting"（准备 cloudflared / 下载它）。于是 ready 变假、界面退回准备页；
+  // 等隧道起好、stage 变回 "ready"，如果这里写成 `if (ready && !booted) ... else if
+  // (!ready) ...`，两个分支就都不成立（booted 已经是 true，而 ready 又是 true），
+  // 界面**永远停在准备页**。表现是"卡住了"，其实是状态机没有回头路。
+  if (ready) {
     $('boot').classList.add('hidden');
     $('app').classList.remove('hidden');
-    $('chip-model').textContent = state.gpu_text || (state.gpu ? state.gpu.name : 'CPU 运行');
-    updateRemoteUI();
-    updateEnv();
-    $('input').focus();
-  } else if (!ready) {
+    if (!booted) {
+      booted = true;
+      $('chip-model').textContent = state.gpu_text || (state.gpu ? state.gpu.name : 'CPU 运行');
+      updateRemoteUI();
+      updateEnv();
+      $('input').focus();
+    }
+  } else {
     $('boot').classList.remove('hidden');
     $('app').classList.add('hidden');
     $('boot-title').textContent = '正在准备';

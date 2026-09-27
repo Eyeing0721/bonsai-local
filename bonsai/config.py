@@ -18,7 +18,7 @@ from pathlib import Path
 
 APP_NAME = "BonsaiLocal"
 APP_TITLE = "Bonsai 本地助手"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # ---------------------------------------------------------------- memory tiers
 # A user picks a feeling, not a number. n_ctx is an implementation detail.

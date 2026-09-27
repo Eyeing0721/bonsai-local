@@ -21,7 +21,22 @@ from pathlib import Path
 from .config import app_root
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+
+# quick tunnel 的域名是若干个单词用连字符拼起来的（实测都是 4 个词，例如
+# kitchen-hopkins-attribute-rough / dry-prompt-historical-betting）。
+#
+# 为什么非要「至少两个连字符」：cloudflared 在**建隧道失败**时会印这样一行
+#     failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": ...
+# 里面那个是它的管理接口地址（这个字符串就写在 cloudflared.exe 里），同样以
+# .trycloudflare.com 结尾。原来的 [a-z0-9-]+ 会把它当成隧道地址收下，
+# _pump 一旦设上 self.url，start() 就立刻返回"成功" —— 隧道根本没建起来，
+# 界面却报出一个"可用"的网址，发给朋友就是一个打不开的链接。
+# 收紧成 quick tunnel 的真实形状（api 一个连字符都没有，直接被排除）。
+URL_RE = re.compile(r"https://[a-z0-9]+(?:-[a-z0-9]+){2,}\.trycloudflare\.com")
+
+# 读起来像报错的行不从中提取网址，双保险：将来 cloudflared 换个说法，
+# 只要那行还带 error/failed 就不会被误当成功。
+BAD_LINE = ("error", "failed", "failure", "fatal", "panic")
 
 CLOUDFLARED_URLS = [
     "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
@@ -86,7 +101,15 @@ class Tunnel:
     def start(self, port: int, progress=None) -> str:
         """Returns the public URL, or raises with a readable reason."""
         if self.running:
-            return self.url
+            # 上一次的隧道还在起（用户连点了两下「开启远程访问」会走到这里）。
+            # 不能直接 `return self.url` —— 那一刻它还是空串，上层会当成
+            # "成功、只是暂时没有网址"，界面就报一个空的链接。等 _pump 填上。
+            deadline = time.time() + 60
+            while time.time() < deadline and not self.url and self.running:
+                time.sleep(0.3)
+            if self.url:
+                return self.url
+            raise RuntimeError(self.error or "隧道仍在启动中，请稍后再试")
         exe = find_cloudflared(self.settings)
         if exe is None and progress is not None:
             exe = download_cloudflared(self.settings, progress)
@@ -127,12 +150,13 @@ class Tunnel:
                     self._log_fh.flush()
                 except Exception:                               # noqa: BLE001
                     pass
-            if not self.url:
+            low = line.lower()
+            bad = any(w in low for w in BAD_LINE)
+            if not self.url and not bad:
                 m = URL_RE.search(line)
                 if m:
                     self.url = m.group(0)
-            low = line.lower()
-            if "error" in low or "failed" in low:
+            if bad:
                 self.error = line.strip()
 
     def stop(self) -> None:

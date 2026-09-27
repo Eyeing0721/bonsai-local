@@ -129,6 +129,13 @@ class App:
         self.lan_port = 0
         self.last_error = ""
         self.boot_done = threading.Event()
+        # 「引擎已加载完、可以用了」——一个**单调**的信号，只在 boot 成功时才置真。
+        #
+        # 前端不能拿 progress.stage == "ready" 来判断就绪：那个 stage 是全局共享的，
+        # 开远程访问时会临时变成 "starting"（准备 cloudflared），于是界面会退回准备页。
+        # 曾经因为前端把"显示聊天页"挂在一次性开关上，退回之后就再也回不来 —— 表现
+        # 就是用户点了「开启远程访问」以后界面永久卡在准备页。
+        self.engine_ready = False
         self._boot_lock = threading.Lock()
         self.kb = kb_mod.Knowledge(settings)
         self.embed = embed_mod.EmbedServer(settings)
@@ -150,7 +157,11 @@ class App:
                 fetch.ensure_engine(self.settings, variant, fetch.PROGRESS)
 
                 model = fetch.ensure_model(self.settings, fetch.PROGRESS)
-                self.engine.start(model, self.lora_paths())
+                # restart 而不是 start：每个调用 boot() 的地方（重启按钮、切预设、
+                # 开关 LoRA、改档位）都是在要求"拿新配置重新加载"。start() 见到引擎
+                # 已在跑就直接返回，会让这些操作全部变成静默空操作。首次启动时
+                # stop() 是空操作，所以同一条路径也成立。
+                self.engine.restart(model, self.lora_paths())
                 self.settings.update(first_run_done=True)
                 self.settings.save()
                 self.kb.load()
@@ -160,11 +171,25 @@ class App:
                 fetch.PROGRESS.set(stage="ready", label="就绪", done=0, total=0,
                                    detail="")
                 self.last_error = ""
+                self.engine_ready = True
             except Exception as e:                              # noqa: BLE001
                 self.last_error = str(e)
+                self.engine_ready = False
                 fetch.PROGRESS.set(stage="error", label="启动失败", error=str(e))
             finally:
                 self.boot_done.set()
+
+    def begin_boot(self) -> None:
+        """重启引擎 / 换风格包之前调用，把「已就绪」打回未就绪。
+
+        前端据此回到准备页，加载完再自己切回来 —— 因为 engine_ready 是单调的
+        「成功才置真」，来回切换不会卡住。
+        """
+        self.engine_ready = False
+        # 顺手清掉上一次的失败原因。不清的话重试期间 state.error 还是旧值，
+        # 前端会一直停在「没能启动」那一屏，看不见重试的进度。
+        self.last_error = ""
+        self.boot_done.clear()
 
     def boot_async(self) -> None:
         threading.Thread(target=self.boot, daemon=True).start()
@@ -333,6 +358,9 @@ class App:
             "engine": self.engine.status(),
             "tunnel": self.tunnel.status(),
             "error": self.last_error,
+            # 前端用它判断"能不能进聊天页"。单调、只在 boot 成功时置真，
+            # 不会被开远程访问之类的临时进度带偏（见 engine_ready 的注释）。
+            "engine_ready": self.engine_ready,
             "gpu": gpu,
             "gpu_text": gpu_summary(gpu),
             "context": cur["ctx"],
@@ -529,7 +557,10 @@ class Handler(BaseHTTPRequestHandler):
 
         s.save()
         if restart:
-            self.app.boot_async()
+            # 走 _reload_later 而不是裸的 boot_async：它会先 begin_boot() 把
+            # engine_ready 打回未就绪，前端才知道要回准备页等。少了这一步，
+            # 改档位既不重启引擎、界面也装作无事发生。
+            self._reload_later()
         return self._json({"ok": True, "restarting": restart,
                            "state": self.app.state(self.local)})
 
@@ -607,7 +638,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reload_later(self) -> None:
         """改完 LoRA 链要重启引擎才生效；放到后台，别让请求卡住。"""
-        self.app.boot_done.clear()
+        self.app.begin_boot()
         self.app.boot_async()
 
     def _lora_preset(self) -> None:
@@ -696,7 +727,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "只能在本地操作"}, 403)
         if self.app.tunnel.running:
             self.app.tunnel.stop()
-        self.app.boot_done.clear()
+        self.app.begin_boot()
         self.app.boot_async()
         return self._json({"ok": True})
 

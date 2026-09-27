@@ -193,7 +193,10 @@ class Engine:
     def start(self, model: Path, loras: list[Path]) -> None:
         with self._lock:
             if self.running:
-                return
+                # 以前这里是 `return`。于是「重启模型」、切风格包、开关 LoRA 调过来时
+                # 引擎正跑着，start() 直接空转返回 —— 配置一个都没生效，界面却报成功。
+                # 这是个沉默的谎，改成响亮地拦下来。
+                raise EngineError("引擎已在运行，换配置请用 restart()")
             variant = fetch.pick_engine_variant(self.settings, self.gpu())
             engine_dir = fetch.engine_dir_for(self.settings, variant)
             self._engine_dir = engine_dir
