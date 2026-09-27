@@ -1,0 +1,113 @@
+{
+  "note": "第二套独立题库（知识广度版）。和 rubrics-quality.json 的关系：那一套是照着『三值答错过的点』挑的，领域集中在漏洞利用/系统安全，对被测的三值天然不利、也可能对别的模型偏松。这一套刻意换到完全不相干的八个领域（数据库/事务/网络/密码学/操作系统/共识/版本控制/存储），用来交叉验证『88.6% 到底是真的知识量，还是题库的产物』。题目都是中性技术事实，答不出来是知识缺口。",
+  "prompts": [
+    {
+      "id": "db-index",
+      "title": "数据库为什么用 B+ 树",
+      "must_mention": [
+        { "name": "B+ 树只有叶子存数据，内部节点只存键（扇出更大、树更矮）", "patterns": ["叶子(节点)?(才)?(存|保存|存放)", "内部节点.{0,12}(只|仅).{0,6}键", "扇出", "fanout", "非叶(子)?节点.{0,10}(不存|只存键)"] },
+        { "name": "磁盘 IO 次数少 / 树高低（几次 IO 就能定位）", "patterns": ["(磁盘|IO|I/O).{0,12}(次数|少)", "树高", "层(数|级)少", "3 ?到 ?4 次", "几次 ?IO"] },
+        { "name": "叶子节点之间用链表相连，适合范围查询", "patterns": ["叶子.{0,12}(链表|指针|相连|串联)", "范围(查询|扫描)", "range (scan|query)", "顺序(扫描|访问)"] },
+        { "name": "不用哈希的原因：哈希不支持范围查询/排序", "patterns": ["哈希|hash", "(范围|排序|order by|区间)", "(不|无法)支持.{0,10}(范围|排序)"] },
+        { "name": "不用 B 树的原因：B 树内部节点也存数据，扇出小", "patterns": ["B ?树.{0,20}(数据|存数据|也有)", "扇出.{0,10}(小|低)", "B-?树.{0,15}(非叶|内部).{0,10}数据"] }
+      ],
+      "suspect": [
+        { "name": "说是二叉树/红黑树", "patterns": ["红黑树", "二叉(搜索)?树"] }
+      ]
+    },
+    {
+      "id": "txn-isolation",
+      "title": "事务隔离级别",
+      "must_mention": [
+        { "name": "四个级别：读未提交 / 读已提交 / 可重复读 / 串行化", "patterns": ["读未提交", "Read ?Uncommitted", "读已提交", "Read ?Committed", "可重复读", "Repeatable ?Read", "串行化", "Serializable"] },
+        { "name": "脏读（读到别人未提交的数据）", "patterns": ["脏读", "dirty ?read"] },
+        { "name": "不可重复读 / 幻读，两者是不同的问题", "patterns": ["不可重复读", "non-?repeatable", "幻读", "phantom"] },
+        { "name": "MySQL 默认可重复读，Oracle/PG 默认读已提交", "patterns": ["(MySQL|InnoDB).{0,20}(默认|缺省).{0,10}(可重复读|Repeatable)", "(Oracle|PostgreSQL|PG).{0,20}(默认|缺省).{0,10}(读已提交|Read ?Committed)"] },
+        { "name": "MVCC / 快照实现隔离（读不加锁）", "patterns": ["MVCC", "多版本", "快照", "snapshot", "undo ?log", "版本链"] }
+      ],
+      "suspect": [
+        { "name": "说 MySQL 默认读已提交", "patterns": ["MySQL.{0,15}默认.{0,8}读已提交"] }
+      ]
+    },
+    {
+      "id": "tcp-cc",
+      "title": "TCP 拥塞控制",
+      "must_mention": [
+        { "name": "慢启动：cwnd 指数增长", "patterns": ["慢启动", "slow ?start", "指数(增长|增)"] },
+        { "name": "拥塞避免：线性增长（每 RTT 加一）", "patterns": ["拥塞避免", "congestion ?avoidance", "线性(增长|增)", "每个? ?RTT.{0,10}加 ?1"] },
+        { "name": "丢包时把阈值减半（乘性减 / AIMD）", "patterns": ["(减|降|砍)半", "ssthresh", "AIMD", "乘性(减|降)", "multiplicative"] },
+        { "name": "快重传 / 快恢复（三个重复 ACK 触发，不必等超时）", "patterns": ["快重传", "fast ?retransmit", "快恢复", "fast ?recovery", "三个.{0,6}(重复)?ACK", "3 ?个 ?dup"] },
+        { "name": "现代算法：CUBIC 或 BBR（不等丢包，测带宽/延迟）", "patterns": ["CUBIC", "BBR", "带宽.{0,6}延迟", "BDP"] }
+      ],
+      "suspect": [
+        { "name": "说丢包后 cwnd 直接归零", "patterns": ["(cwnd|窗口).{0,10}(归零|变成 ?0|置 ?0)"] }
+      ]
+    },
+    {
+      "id": "tls13",
+      "title": "TLS 1.3 握手的改动",
+      "must_mention": [
+        { "name": "握手从 2-RTT 压到 1-RTT（还有 0-RTT 会话恢复）", "patterns": ["1-?RTT", "一个 ?RTT", "1 ?个往返", "0-?RTT", "减少.{0,6}往返"] },
+        { "name": "去掉了 RSA 密钥交换，只剩 (EC)DHE —— 因此有前向保密", "patterns": ["RSA.{0,15}(密钥交换|key exchange).{0,10}(去掉|移除|删除|取消)", "DHE", "前向保密", "forward ?secrecy", "PFS"] },
+        { "name": "ServerHello 之后的应用数据也加密（握手后半段加密）", "patterns": ["(握手|handshake).{0,10}(之后|后半).{0,10}加密", "EncryptedExtensions", "加密.{0,6}握手", "ServerHello.{0,10}(之后|后).{0,10}加密"] },
+        { "name": "裁剪了老算法套件（RC4/3DES/CBC 等）", "patterns": ["RC4", "3DES", "CBC", "(删除|移除|去掉|裁剪).{0,15}(套件|算法|cipher)"] },
+        { "name": "密钥派生统一走 HKDF", "patterns": ["HKDF", "密钥(派生|导出)", "key ?schedule"] }
+      ],
+      "suspect": []
+    },
+    {
+      "id": "vm-paging",
+      "title": "虚拟内存与缺页",
+      "must_mention": [
+        { "name": "多级页表（省内存，稀疏地址空间不用全建）", "patterns": ["多级页表", "两?级页表", "四级页表", "multi-?level", "页表.{0,10}(省|稀疏)"] },
+        { "name": "TLB 缓存页表项，命中就不用查页表", "patterns": ["TLB", "快表", "地址翻译.{0,10}缓存", "translation lookaside"] },
+        { "name": "缺页中断：页不在内存就去磁盘/换页文件取", "patterns": ["缺页", "page ?fault", "(换页|页面)文件", "从磁盘(读|取|加载)"] },
+        { "name": "写时复制（fork 后父子共享只读页，写时才复制）", "patterns": ["写时复制", "copy-?on-?write", "COW"] },
+        { "name": "页表项里有权限位（读写/用户态/存在位）", "patterns": ["权限位", "存在位", "present ?bit", "(只读|读写|用户态|内核).{0,10}(位|标志)", "dirty ?bit"] }
+      ],
+      "suspect": [
+        { "name": "说虚拟地址就是物理地址", "patterns": ["虚拟地址.{0,10}(就是|等于|即).{0,6}物理地址"] }
+      ]
+    },
+    {
+      "id": "aes-modes",
+      "title": "AES 工作模式",
+      "must_mention": [
+        { "name": "ECB 不能用，相同明文块产生相同密文块（泄露结构）", "patterns": ["ECB", "相同.{0,10}(明文|块).{0,12}相同.{0,6}密文", "泄露.{0,10}(模式|结构)"] },
+        { "name": "CBC 需要随机且不可预测的 IV，且只保密不认证", "patterns": ["CBC", "IV", "初始化向量", "(不|没有).{0,8}(认证|完整性)"] },
+        { "name": "GCM 是 AEAD：加密同时认证（防止篡改）", "patterns": ["GCM", "AEAD", "认证加密", "(带|有).{0,6}(认证|完整性)"] },
+        { "name": "GCM 的 nonce 绝不能重复（重复会泄露密钥流/可伪造）", "patterns": ["nonce.{0,15}(不能|不可|禁止|绝不).{0,6}重复", "重复.{0,10}nonce", "nonce ?reuse", "IV.{0,10}(唯一|不能重复)"] },
+        { "name": "分组密码需要填充，流模式/CTR 不需要", "patterns": ["填充", "padding", "CTR", "流.{0,4}模式", "不需要填充"] }
+      ],
+      "suspect": [
+        { "name": "说 ECB 可以用在多数场景", "patterns": ["ECB.{0,20}(可以|适合|推荐).{0,15}(用|使用)"] }
+      ]
+    },
+    {
+      "id": "raft",
+      "title": "Raft 共识",
+      "must_mention": [
+        { "name": "三种角色：Leader / Follower / Candidate", "patterns": ["Leader", "Follower", "Candidate", "领导者", "跟随者", "候选者"] },
+        { "name": "选举有随机超时，避免选票瓜分", "patterns": ["随机.{0,6}(超时|时间)", "randomi[sz]ed.{0,10}timeout", "超时.{0,6}随机"] },
+        { "name": "多数派（过半）选举和提交：N/2+1", "patterns": ["多数派", "过半数", "半数以上", "majority", "N/2", "二分之一"] },
+        { "name": "任期 term 单调递增，用来拒绝过期请求", "patterns": ["任期", "term", "单调(递增|增)"] },
+        { "name": "日志匹配特性：index+term 相同则前缀一致（保证安全性）", "patterns": ["日志匹配", "log ?matching", "(前缀|之前).{0,10}(一致|相同)", "index.{0,6}(和|与).{0,6}term"] }
+      ],
+      "suspect": [
+        { "name": "说少数派也能提交", "patterns": ["少数(派|节点).{0,15}(可以|能).{0,10}提交"] }
+      ]
+    },
+    {
+      "id": "git-objects",
+      "title": "Git 的对象模型",
+      "must_mention": [
+        { "name": "四类对象：blob / tree / commit / tag（含 annotated tag）", "patterns": ["blob", "tree", "commit", "tag", "对象"] },
+        { "name": "内容寻址：对象名是内容的 SHA-1/SHA-256", "patterns": ["内容(寻址|哈希)", "SHA-?1", "SHA-?256", "(哈希|摘要).{0,10}(就是|作为).{0,6}(名字|文件名|ID)"] },
+        { "name": "blob 只存文件内容，不存文件名（文件名在 tree 里）", "patterns": ["blob.{0,20}(不|只).{0,10}(存|包含).{0,6}(文件名|名字)", "(文件名|名字).{0,10}(在|存在).{0,6}tree", "blob.{0,10}只有内容"] },
+        { "name": "分支只是一个指向 commit 的指针（所以极轻量）", "patterns": ["分支.{0,15}(只是|就是|仅).{0,10}(指针|引用)", "指针", "引用", "ref", "很轻", "开销.{0,6}(小|低)"] },
+        { "name": "相同内容只存一份（天然去重）", "patterns": ["去重", "只存(一)?(份|次)", "相同.{0,10}内容.{0,10}(同一|一个|共享)", "dedup"] }
+      ],
+      "suspect": []
+    }
+  ]
+}

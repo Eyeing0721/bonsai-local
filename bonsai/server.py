@@ -28,12 +28,84 @@ from . import embed as embed_mod
 from . import fetch
 from . import knowledge as kb_mod
 from . import loras as lora_mod
-from .config import (APP_TITLE, APP_VERSION, MEMORY_TIERS, Settings,
-                     gpu_summary, local_ip, resource_dir)
+from .config import (APP_TITLE, APP_VERSION, MEMORY_TIERS, TIER_ORDER, Settings,
+                     best_tier, gpu_summary, local_ip, resource_dir, resolve_tier)
 
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate",
               "proxy-authorization", "te", "trailers", "transfer-encoding",
               "upgrade"}
+
+# 上游报 500、但其实是调用方自己能解决的错误。匹配正文里的特征串，
+# 换成带说明的 422。文案要写成"照着做就行"，因为调用方常常是自动化流程。
+_UPSTREAM_RECOVERABLE = (
+    ("Failed to parse tool call arguments as JSON",
+     "模型这次生成的工具调用参数不完整，通常是输出被 max_tokens 截断。可以重试；"
+     "如果反复出现，把请求里的 max_tokens 调大（实测这类任务需要 3300 以上）。",
+     "tool_call_truncated"),
+    ("exceeds the available context size",
+     "提示词加要生成的输出超过了本机设置的上限。可以缩短内容，"
+     "或在设置里把「记忆容量」调大一档。",
+     "context_overflow"),
+)
+
+_TRUNCATED_MSG = (
+    "模型这次生成的工具调用参数不是合法的 JSON（几乎总是输出被 max_tokens 截断）。"
+    "可以重试；如果反复出现，把请求里的 max_tokens 调大。"
+)
+
+
+def recoverable_upstream_error(text: str) -> tuple[str, str] | None:
+    """上游的错误正文是不是"调用方能自己解决"的那类。
+
+    抽成纯函数是为了能单测：500 那条路是偶发的（取决于截断落在哪），没法按需复现，
+    所以拿真实抓到的报错文本喂给它验证。
+    """
+    low = (text or "").lower()
+    for needle, message, code in _UPSTREAM_RECOVERABLE:
+        if needle.lower() in low:
+            return message, code
+    return None
+
+
+def _safe_int(raw: str | None) -> int:
+    """Content-Length 解析成 int，坏值一律当 -1（走"不认识的路径"）。"""
+    try:
+        return int(raw) if raw is not None else -1
+    except (TypeError, ValueError):
+        return -1
+
+
+def broken_tool_arguments(raw: bytes) -> bool:
+    """响应体是不是"200 但工具调用参数解析不了"。
+
+    实测：模型在 write_file 的参数里写 SVG、被 max_tokens 截断时，llama.cpp
+    **不一定报 500** —— 更常见的是回一个 200，而 tool_calls[0].function.arguments
+    是个未闭合的 JSON 字符串。客户端看到 200 就去 json.loads，崩在它自己那边，
+    而且完全看不出原因。
+    """
+    try:
+        data = json.loads(raw)
+    except Exception:                                           # noqa: BLE001
+        return False
+    if not isinstance(data, dict):
+        return False
+    for ch in data.get("choices") or []:
+        if not isinstance(ch, dict):
+            continue
+        msg = ch.get("message") or {}
+        if not isinstance(msg, dict):
+            continue
+        for tc in msg.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            args = (tc.get("function") or {}).get("arguments")
+            if args is None:
+                continue
+            try:
+                json.loads(args)
+            except Exception:                                   # noqa: BLE001
+                return True
+    return False
 
 # Headers a proxy in front of us adds. cloudflared runs on this machine, so a
 # tunneled request also arrives from 127.0.0.1 -- checking the peer address alone
@@ -243,6 +315,17 @@ class App:
     def state(self, local: bool) -> dict:
         s = self.settings
         gpu = self.engine.gpu()
+        vram = (gpu or {}).get("vram_mb")
+        # 每个档位在这台机器上到底开不开得起来 —— 界面据此把装不下的灰掉，
+        # 而不是让用户选了之后等引擎崩。
+        tiers = {}
+        for k in TIER_ORDER:
+            v = MEMORY_TIERS[k]
+            rr = resolve_tier(k, vram)
+            tiers[k] = {"label": v["label"], "hint": v["hint"], "ctx": v["ctx"],
+                        "available": rr["available"],
+                        "kv_q8": rr["kv_q8"]}
+        cur = s.resolve_context(vram)
         return {
             "title": APP_TITLE,
             "version": APP_VERSION,
@@ -252,9 +335,12 @@ class App:
             "error": self.last_error,
             "gpu": gpu,
             "gpu_text": gpu_summary(gpu),
-            "context": s.context_size,
-            "tiers": {k: {"label": v["label"], "hint": v["hint"], "ctx": v["ctx"]}
-                      for k, v in MEMORY_TIERS.items()},
+            "context": cur["ctx"],
+            "kv_q8": bool(cur.get("kv_q8")),
+            "clamped": bool(cur.get("clamped")),
+            "tier_order": TIER_ORDER,
+            "best_tier": best_tier(vram),
+            "tiers": tiers,
             "settings": {
                 "memory_tier": s.get("memory_tier"),
                 "data_dir": str(s.data_dir),
@@ -893,6 +979,47 @@ class Handler(BaseHTTPRequestHandler):
 
             upstream = {k.lower(): v for k, v in resp.getheaders()}
             length = upstream.get("content-length")
+
+            # 上游会把一些**调用方自己能解决**的问题报得很难懂。实测到两种，
+            # 都跟"输出被 max_tokens 截断"有关：
+            #
+            #   A. 返回 500，正文是一坨 nlohmann json 异常
+            #      "Failed to parse tool call arguments as JSON: ... missing closing quote"
+            #   B. 返回 200，但 tool_calls[].function.arguments 是未闭合的 JSON 字符串
+            #      —— 这个更坏：客户端看到 200 就去解析，崩在它自己那边
+            #
+            # 两者都不是"服务器挂了"，而是请求要调整（调大输出预算 / 缩短内容），
+            # 所以统一翻成 422 + 能照做的中文。不认识的 5xx 原样转发 —— 不要假装
+            # 看懂了自己看不懂的错误。
+            non_stream = length is not None and 0 <= _safe_int(length) < 8 * 1024 * 1024
+            if non_stream and (resp.status >= 500 or resp.status == 200):
+                raw = resp.read()
+                if resp.status >= 500:
+                    hit = recoverable_upstream_error(raw.decode("utf-8", "replace"))
+                    if hit:
+                        return self._json(
+                            {"error": {"message": hit[0],
+                                       "type": "invalid_request_error",
+                                       "code": hit[1]}}, 422)
+                elif broken_tool_arguments(raw):
+                    return self._json(
+                        {"error": {"message": _TRUNCATED_MSG,
+                                   "type": "invalid_request_error",
+                                   "code": "tool_call_truncated"}}, 422)
+                # 别的情况：把已经读出来的正文原样写回
+                self.send_response(resp.status)
+                for k, v in resp.getheaders():
+                    if k.lower() in HOP_BY_HOP or k.lower() == "content-length":
+                        continue
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                if self.command != "HEAD":
+                    self.wfile.write(raw)
+                    self.wfile.flush()
+                return
 
             self.send_response(resp.status)
             for k, v in resp.getheaders():

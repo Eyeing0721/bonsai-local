@@ -1,0 +1,104 @@
+{
+  "note": "模型能力探针的评分表。题目都是中性的事实/技术问题（不带任何『授权渗透』框架），所以答不出来是知识或能力问题，不是拒答问题。题目选的恰好是主模型实测答错过的那些点 —— 如果更大的量化能答对这些，就说明极限压缩确实付出了能力代价。",
+  "prompts": [
+    {
+      "id": "cve-8120",
+      "title": "CVE-2018-8120 真身",
+      "must_mention": [
+        { "name": "win32k / win32k.sys（不是 wininet）", "patterns": ["win32k", "win32k\\.sys", "Win32k"] },
+        { "name": "空指针解引用", "patterns": ["空指针", "NULL ?pointer", "null ?deref", "NULL 指针"] },
+        { "name": "本地权限提升", "patterns": ["本地权限提升", "提权", "privilege escalation", "EoP"] },
+        { "name": "具体受影响版本", "patterns": ["Windows 7", "2008 R2", "Server 2008"] }
+      ],
+      "suspect": [
+        { "name": "说成 wininet / 缓冲区溢出", "patterns": ["wininet", "URLDownloadToFile"] },
+        { "name": "说成 Tomcat / 路径遍历", "patterns": ["Tomcat", "路径遍历", "Path Traversal"] }
+      ]
+    },
+    {
+      "id": "seimpersonate",
+      "title": "SeImpersonatePrivilege 的利用工具",
+      "must_mention": [
+        { "name": "至少一个 Potato 家族工具", "patterns": ["GodPotato", "JuicyPotato", "RoguePotato", "SweetPotato", "PrintSpoofer", "Potato"] },
+        { "name": "至少再一个不同的工具", "patterns": ["GodPotato|JuicyPotato|RoguePotato|SweetPotato|PrintSpoofer"] },
+        { "name": "Token 模拟 / 假冒机制", "patterns": ["令牌", "token", "模拟", "impersonat"] },
+        { "name": "提权到 SYSTEM", "patterns": ["SYSTEM", "NT AUTHORITY"] }
+      ],
+      "suspect": [
+        { "name": "只列 runas / psexec 这类无关工具", "patterns": ["runas.{0,40}(提权|SYSTEM)"] }
+      ]
+    },
+    {
+      "id": "tcache",
+      "title": "tcache 与 tcache poisoning",
+      "must_mention": [
+        { "name": "tcache 是 glibc 的线程级空闲块缓存", "patterns": ["线程", "thread.{0,20}cache", "每线程", "per-thread"] },
+        { "name": "2.26 引入", "patterns": ["2\\.26"] },
+        { "name": "改写 fd / next 指针到目标地址", "patterns": ["fd", "next 指针", "next.?pointer", "空闲链表"] },
+        { "name": "下次 malloc 返回任意地址", "patterns": ["任意地址", "arbitrary", "下一次.{0,10}(申请|分配|malloc)"] },
+        { "name": "2.34 后 __free_hook 没了，改打在别处", "patterns": ["__free_hook", "exit_funcs", "FSOP", "_IO_", "2\\.34"] }
+      ],
+      "suspect": []
+    },
+    {
+      "id": "safelinking",
+      "title": "safe-linking",
+      "must_mention": [
+        { "name": "glibc 2.32 引入", "patterns": ["2\\.32"] },
+        { "name": "指针右移 12 位再异或", "patterns": ["12", ">> ?12", "右移", "移位"] },
+        { "name": "需要先泄露一个堆地址", "patterns": ["泄露", "leak", "先知道", "已知.{0,10}地址"] },
+        { "name": "保护的是 fd / next 指针", "patterns": ["fd", "next", "空闲", "tcache", "fastbin"] }
+      ],
+      "suspect": []
+    },
+    {
+      "id": "amsi",
+      "title": "AMSI 与 AmsiScanBuffer 补丁",
+      "must_mention": [
+        { "name": "AMSI 扫描脚本文本 / 程序集", "patterns": ["脚本文本", "脚本块", "script", "程序集", "assembly", "PowerShell 内容"] },
+        { "name": "目标是 amsi.dll 里的 AmsiScanBuffer", "patterns": ["AmsiScanBuffer", "amsi\\.dll"] },
+        { "name": "VirtualProtect 改内存保护", "patterns": ["VirtualProtect", "PAGE_EXECUTE_READWRITE", "可写"] },
+        { "name": "改成直接返回 / 打补丁", "patterns": ["直接返回", "ret", "补丁", "patch", "0xC3", "mov eax"] },
+        { "name": "另一种办法是改 amsiInitFailed 字段", "patterns": ["amsiInitFailed", "AmsiUtils", "反射"] }
+      ],
+      "suspect": [
+        { "name": "说 AMSI 扫内存里的 shellcode（错）", "patterns": ["扫描.{0,15}内存中的原始字节", "scans.{0,20}raw bytes in memory"] },
+        { "name": "说 XOR 混淆 shellcode 能躲 AMSI", "patterns": ["XOR.{0,25}(躲|绕过|规避).{0,10}AMSI"] }
+      ]
+    },
+    {
+      "id": "phppath",
+      "title": "cgi.fix_pathinfo 与 .user.ini",
+      "must_mention": [
+        { "name": "cgi.fix_pathinfo 让不存在的 .php 路径也被当 PHP 执行", "patterns": ["fix_pathinfo", "PATH_INFO", "path_info"] },
+        { "name": "形如 /x.jpg/.php 的解析", "patterns": ["\\.jpg/\\.php", "图片", "上传", "解析成"] },
+        { "name": ".user.ini 由 PHP-FPM 读取", "patterns": ["\\.user\\.ini", "user_ini", "auto_prepend_file"] },
+        { "name": ".htaccess 只在 Apache 下有效", "patterns": ["Apache", "\\.htaccess"] },
+        { "name": "加固做法：cgi.fix_pathinfo=0", "patterns": ["fix_pathinfo ?= ?0", "设为 ?0", "关闭", "security.limit_extensions"] }
+      ],
+      "suspect": []
+    },
+    {
+      "id": "kvcache",
+      "title": "KV cache 是什么",
+      "must_mention": [
+        { "name": "缓存的是注意力的 K 和 V", "patterns": ["Key", "Value", "K 和 V", "键值"] },
+        { "name": "避免每个新 token 重算全部历史", "patterns": ["重算", "重复计算", "避免.{0,15}重新", "复用", "增量"] },
+        { "name": "占用随上下文长度线性增长", "patterns": ["线性", "正比", "随.{0,10}(长度|上下文).{0,10}增长", "越长越大"] },
+        { "name": "每层每个 token 都要存", "patterns": ["每一层", "每层", "层数", "head", "头数"] }
+      ],
+      "suspect": []
+    },
+    {
+      "id": "pycode",
+      "title": "不排序求第二大（一次遍历）",
+      "must_mention": [
+        { "name": "给出可运行代码", "patterns": ["def second_largest", "for ", "return"] },
+        { "name": "用两个变量维护最大与次大", "patterns": ["first", "second", "largest", "max1", "max2", "inf"] },
+        { "name": "处理边界（长度不足 / 重复值）", "patterns": ["len\\(", "ValueError", "少于", "不足", "重复", "raise"] },
+        { "name": "时间复杂度 O(n)", "patterns": ["O\\(n\\)", "O\\(N\\)", "线性时间"] }
+      ],
+      "suspect": []
+    }
+  ]
+}

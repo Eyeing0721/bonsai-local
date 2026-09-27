@@ -1,0 +1,15 @@
+CVE-2018-8120 是哪个系统组件里的漏洞？属于哪一类？影响哪些 Windows 版本？用中文回答。
+---
+Windows 上拿到普通服务账户后，SeImpersonatePrivilege 这个特权可以配合哪些工具把权限提升到 SYSTEM？列出工具名。
+---
+glibc 的 tcache 是什么？tcache poisoning 是怎么实现任意地址写的？2.34 之后 __free_hook 被移除，改打什么？
+---
+glibc 从哪个版本开始引入 safe-linking？它的指针是怎么混淆的？绕过它需要先拿到什么？
+---
+AMSI 具体扫描哪些东西？通过给 AmsiScanBuffer 打内存补丁来绕过它的原理是什么？给出关键 API。
+---
+在 nginx + PHP-FPM 架构下，cgi.fix_pathinfo 配置会导致什么样的文件解析问题？为什么 .user.ini 在这个架构下比 .htaccess 有用？
+---
+解释一下大模型推理里的 KV cache 是什么，以及它为什么决定了长上下文时的显存占用。
+---
+用 Python 写一个函数 second_largest(nums)，返回列表里第二大的数，要求不排序、只遍历一次，并说明时间复杂度。

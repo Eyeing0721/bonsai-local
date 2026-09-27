@@ -270,7 +270,9 @@ class Knowledge:
             self.vectors, self.dim = None, 0
             self._bm25, self._tokens = None, None
             try:
-                meta = json.loads(self.index_path.read_text(encoding="utf-8"))
+                # utf-8-sig：用户手改过索引就会带 BOM，用 utf-8 读会抛异常并被
+                # 吞掉，表现为"资料还在列表里但检索不到"。
+                meta = json.loads(self.index_path.read_text(encoding="utf-8-sig"))
                 self.dim = int(meta.get("dim") or 0)
                 self.docs = [Doc(**d) for d in meta.get("docs", [])]
             except Exception:                                   # noqa: BLE001

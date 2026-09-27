@@ -64,7 +64,9 @@ def installed_dir(settings: Settings) -> Path:
 # ------------------------------------------------------------------ catalog
 def _read_json(path: Path) -> dict | None:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig：见 config.Settings.load —— 带 BOM 的 JSON 用 utf-8 读会抛
+        # 异常并被吞掉，表现为"内建预设莫名其妙不见了"。
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data if isinstance(data, dict) else None
     except Exception:                                           # noqa: BLE001
         return None

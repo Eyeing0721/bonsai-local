@@ -256,6 +256,11 @@ button, input, textarea { font: inherit; color: inherit; }
 .tile.active { border-color: var(--accent); background: rgba(110, 231, 168, .08); }
 .tile b { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
 .tile span { font-size: 11.5px; color: var(--muted); }
+/* 这台机器开不起来的档位：灰掉但保留，用户才知道极限在哪、差多少 */
+.tile.disabled { opacity: .45; cursor: not-allowed; }
+.tile.disabled:hover { border-color: var(--line); }
+.tile em.tag { font-style: normal; color: var(--accent); font-size: 10.5px; }
+.tile.disabled em.tag { color: var(--muted); }
 
 .path-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

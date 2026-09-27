@@ -18,16 +18,107 @@ from pathlib import Path
 
 APP_NAME = "BonsaiLocal"
 APP_TITLE = "Bonsai 本地助手"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------- memory tiers
 # A user picks a feeling, not a number. n_ctx is an implementation detail.
+#
+# 档位一路开到模型原生上限（262,144）。能不能真开起来由显存决定，见下面
+# context_ceiling()：装不下的档位在界面上会标出来，而不是等用户选了才崩。
 MEMORY_TIERS: dict[str, dict] = {
-    "short":    {"label": "简短对话", "ctx": 8192,  "hint": "占用最少，适合日常问答"},
-    "standard": {"label": "标准",     "ctx": 16384, "hint": "推荐，记忆与速度平衡"},
-    "long":     {"label": "长文档",   "ctx": 32768, "hint": "能读长材料，占用更多显存"},
+    "short":    {"label": "简短对话", "ctx": 8192,   "hint": "占用最少，适合日常问答"},
+    "standard": {"label": "标准",     "ctx": 16384,  "hint": "推荐，记忆与速度平衡"},
+    "long":     {"label": "长文档",   "ctx": 32768,  "hint": "能读长材料，占用更多显存"},
+    "huge":     {"label": "超长文档", "ctx": 65536,  "hint": "整本书或整个代码库，需要 12 GB 以上显存"},
+    "extreme":  {"label": "超长会话", "ctx": 131072, "hint": "代理式长会话；第一轮要读几分钟，之后靠前缀缓存"},
+    "max":      {"label": "拉满",     "ctx": 262144, "hint": "模型的原生上限（26 万 token），只有大显存开得起来"},
 }
 DEFAULT_TIER = "standard"
+TIER_ORDER = list(MEMORY_TIERS)
+
+# ------------------------------------------------------------------ context math
+# 上下文的显存账单。这个模型 64 层里只有 16 层是普通注意力，另外 48 层是 GDN
+# （状态定长，**不随上下文增长**），所以每 token 的 KV 只算这 16 层：
+#
+#   2(K,V) × 4 个 KV 头 × 256 维 × 2 字节 = 4 KiB / 层 / token
+#   16 层合起来 = 64 KiB/token
+#
+# KV 量化到 q8_0 后减半（32 KiB/token），质量损失很小 —— 我们实测开 q8_0 之后
+# 262,144 上下文能装进 16 GB 卡（15.96 GiB），而 f16 只能到 131,072（15.5 GiB）。
+# 所以「能开多大」的主要杠杆就是 KV 精度，而不是买更大的卡。
+KV_FULL_ATTN_LAYERS = 16
+KV_HEAD_COUNT = 4
+KV_HEAD_DIM = 256
+KV_BYTES_F16 = 2 * KV_HEAD_COUNT * KV_HEAD_DIM * 2 * KV_FULL_ATTN_LAYERS   # 64 KiB
+KV_BYTES_Q8 = KV_BYTES_F16 // 2                                            # 32 KiB
+
+# 权重是产品里唯一那个模型的三值量化大小（PTQ1_0，5.54 GiB）。
+WEIGHTS_MIB = 5673
+
+# 计算缓冲随上下文缓慢增长。下面这组常数是拿两次实收回推并**校准到零偏差**的：
+# 回代 f16@131072 得 15.50 GiB、q8_0@262144 得 15.96 GiB，与实测完全相同。
+BUFFER_BASE_MIB = 1538.0
+BUFFER_PER_TOKEN_MIB = 0.0036
+
+# 桌面本身要占一点显存，但这台机器实测下来几乎可以忽略（262,144 token 那次
+# 总共用了 15.96 GiB / 16.0 GiB，而桌面还开着）。留 0 而不是留几百 MiB，否则
+# 「拉满」这一档会被一个并不存在的余量挡在门外。真要遇到显存被别的东西占住的
+# 情况，引擎启动失败会带着日志尾部报上来，比静默降档更容易查。
+VRAM_RESERVE_MIB = 0
+
+# 没有 GPU 时不建议开大：prefill 在 CPU 上慢几十倍。
+CPU_MAX_CTX = 32768
+
+
+def kv_mib_per_token(q8: bool) -> float:
+    """每 token 的 KV 显存（MiB）。"""
+    return (KV_BYTES_Q8 if q8 else KV_BYTES_F16) / (1024 * 1024)
+
+
+def context_ceiling(vram_mb: int, q8: bool, weights_mib: int = WEIGHTS_MIB) -> int:
+    """这个显存档位能装下的最大上下文。
+
+    解  weights + base + per·ctx + ctx·kv  ≤  vram − reserve
+    即  ctx ≤ (vram − reserve − weights − base) / (kv + per)
+    """
+    if vram_mb <= 0:
+        return 0
+    head = vram_mb - VRAM_RESERVE_MIB - weights_mib - BUFFER_BASE_MIB
+    if head <= 0:
+        return 0
+    return max(0, int(head / (kv_mib_per_token(q8) + BUFFER_PER_TOKEN_MIB)))
+
+
+def resolve_tier(tier: str, vram_mb: int | None,
+                 weights_mib: int = WEIGHTS_MIB) -> dict:
+    """这个档位实际会怎么跑。
+
+    先试 f16（最快、最准），装不下就退到 q8_0；两个都装不下就是 unavailable。
+    返回的 kv_q8 由引擎翻译成 --cache-type-k/v 参数。
+    """
+    ctx = MEMORY_TIERS.get(tier, MEMORY_TIERS[DEFAULT_TIER])["ctx"]
+    if not vram_mb:                      # 无 GPU：只给到 CPU 建议上限
+        return {"ctx": min(ctx, CPU_MAX_CTX), "kv_q8": False,
+                "available": ctx <= CPU_MAX_CTX, "reason": "cpu",
+                "ceiling": CPU_MAX_CTX}
+    if ctx <= context_ceiling(vram_mb, False, weights_mib):
+        return {"ctx": ctx, "kv_q8": False, "available": True, "reason": "",
+                "ceiling": context_ceiling(vram_mb, True, weights_mib)}
+    if ctx <= context_ceiling(vram_mb, True, weights_mib):
+        return {"ctx": ctx, "kv_q8": True, "available": True, "reason": "",
+                "ceiling": context_ceiling(vram_mb, True, weights_mib)}
+    return {"ctx": ctx, "kv_q8": True, "available": False, "reason": "vram",
+            "ceiling": context_ceiling(vram_mb, True, weights_mib)}
+
+
+def best_tier(vram_mb: int | None, weights_mib: int = WEIGHTS_MIB) -> str:
+    """不越界的最大档位 —— 用来做「自动」。"""
+    best = TIER_ORDER[0]
+    for name in TIER_ORDER:
+        if resolve_tier(name, vram_mb, weights_mib)["available"]:
+            best = name
+    return best
+
 
 DEFAULTS: dict = {
     "memory_tier": DEFAULT_TIER,
@@ -89,7 +180,12 @@ class Settings:
     def load(self) -> None:
         with self._lock:
             try:
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
+                # utf-8-sig，不是 utf-8：Windows 记事本和 PowerShell 的
+                # `Set-Content -Encoding UTF8` 都会写 BOM，而 json.loads 见到
+                # BOM 会直接抛异常。异常被下面吞掉之后 _data 保持默认值，表现
+                # 为"用户手改过一次设置文件，所有配置就悄悄没了"。utf-8-sig 是
+                # utf-8 的超集，带不带 BOM 都能读。
+                raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
                 if isinstance(raw, dict):
                     self._data = {**DEFAULTS, **raw}
             except FileNotFoundError:
@@ -172,7 +268,25 @@ class Settings:
     # -- product-facing values -------------------------------------------
     @property
     def context_size(self) -> int:
+        """用户选的档位标称大小（界面上显示这个）。"""
         return MEMORY_TIERS[self.get("memory_tier")]["ctx"]
+
+    def resolve_context(self, vram_mb: int | None,
+                        weights_mib: int = WEIGHTS_MIB) -> dict:
+        """档位 → 实际能跑的配置。
+
+        装不下时不报错，而是按这台机器的上限截断（并打上 clamped 标记让界面
+        能说一句人话）—— 用户选「拉满」而卡只有 8 GB，应该得到"已经替你开到
+        这台的极限"，而不是启动失败。
+        """
+        r = resolve_tier(self.get("memory_tier"), vram_mb, weights_mib)
+        if r["available"] or not vram_mb:
+            return r
+        ceil = r.get("ceiling", 0)
+        if ceil <= 0:
+            # 连一个 KV 都放不下：退到最小的档，交给 CPU 之外的最低配
+            return dict(r, ctx=MEMORY_TIERS[TIER_ORDER[0]]["ctx"], clamped=True)
+        return dict(r, ctx=(ceil // 1024) * 1024, clamped=True)
 
     def rotate_token(self) -> str:
         tok = new_token()

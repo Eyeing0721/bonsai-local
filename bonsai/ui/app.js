@@ -307,13 +307,23 @@ function closeSettings() { $('settings').classList.add('hidden'); }
 
 function renderSettings() {
   const s = state.settings || {};
-  // 记忆容量
+  // 记忆容量：档位一路开到模型原生上限。装不下这台机器的档位不隐藏 ——
+  // 灰掉并说明原因，用户才知道"极限"在哪、差多少。
   const box = $('tiles-memory');
   box.innerHTML = '';
   Object.entries(state.tiers || {}).forEach(([key, t]) => {
     const b = document.createElement('button');
-    b.className = 'tile' + (s.memory_tier === key ? ' active' : '');
-    b.innerHTML = `<b>${t.label}</b><span>${t.hint}<br>${t.ctx / 1024}K 上下文</span>`;
+    const off = t.available === false;
+    b.className = 'tile' + (s.memory_tier === key ? ' active' : '') + (off ? ' disabled' : '');
+    const tags = [];
+    if (t.kv_q8) tags.push('KV 压缩');
+    if (key === state.best_tier) tags.push('本机推荐');
+    if (off) tags.push('显存不够');
+    b.innerHTML =
+      `<b>${t.label}</b><span>${t.hint}<br>${t.ctx / 1024}K 上下文` +
+      (tags.length ? `<br><em class="tag">${tags.join(' · ')}</em>` : '') +
+      `</span>`;
+    b.disabled = off;
     b.onclick = () => saveSettings({ memory_tier: key });
     box.appendChild(b);
   });
@@ -475,10 +485,15 @@ function renderLoras() {
 
 function updateEnv() {
   const e = state.engine || {};
+  // 记忆容量要显示的是引擎**实际**跑的值（可能因显存被截断），而不是用户选的档位。
+  const ctxK = `${Math.round((state.context || 0) / 1024)}K`;
+  const notes = [];
+  if (state.kv_q8) notes.push('KV 压缩');
+  if (state.clamped) notes.push('已按显存截断');
   const rows = [
     ['运行方式', state.gpu_text || (state.gpu ? state.gpu.name : 'CPU（没有检测到 NVIDIA 显卡）')],
     ['显存', state.gpu && state.gpu.vram_mb ? `${(state.gpu.vram_mb / 1024).toFixed(0)} GB` : '—'],
-    ['记忆容量', `${(state.context || 0) / 1024}K`],
+    ['记忆容量', notes.length ? `${ctxK}（${notes.join(' · ')}）` : ctxK],
     ['版本', state.version || '—'],
   ];
   $('env-kv').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${esc(String(v))}</b></div>`).join('');

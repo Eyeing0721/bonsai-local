@@ -216,7 +216,9 @@ def fetch_with_fallback(sources: list[str], dest: Path, progress: Progress,
 # ---------------------------------------------------------------------- engines
 def _read_manifest(path: Path) -> dict[str, dict] | None:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # utf-8-sig：Windows 记事本/PowerShell 写出的 JSON 常带 BOM，而 json.loads
+        # 见到 BOM 会抛异常，被下面吞掉后表现为"清单明明在却当作不存在"。
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict) and data:
             return data
     except Exception:                                           # noqa: BLE001
